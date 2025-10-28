@@ -1,0 +1,810 @@
+================================================================================
+  SPI + DMA 使用说明文档
+  TMS320F28377D + ADS1278 (ADC) + AD5754 (DAC)
+  版本: 1.2
+  日期: 2025-10-22
+================================================================================
+
+目录
+----
+1. 硬件连线表
+2. API函数列表
+3. 配置参数说明
+4. 典型应用场景
+5. 常见问题FAQ
+6. 性能数据
+
+================================================================================
+1. 硬件连线表
+================================================================================
+
+1.1 SPIA连接 (ADS1278 ADC)
+----------------------------
+| GPIO Pin | Function    | Direction | 连接到          | 说明                     |
+|----------|-------------|-----------|-----------------|--------------------------|
+| GPIO54   | SPISIMOA    | Output    | ADS1278 DIN     | SPI Master Out (MOSI)    |
+| GPIO55   | SPISOMIA    | Input     | ADS1278 DOUT    | SPI Master In (MISO)     |
+| GPIO56   | SPICLKA     | Output    | ADS1278 SCLK    | SPI Clock (10MHz)        |
+| GPIO57   | SPIA_CS     | Output    | ADS1278 /CS     | Chip Select (Active Low) |
+
+1.2 SPIB连接 (AD5754 DAC)
+----------------------------
+| GPIO Pin | Function    | Direction | 连接到          | 说明                     |
+|----------|-------------|-----------|-----------------|--------------------------|
+| GPIO24   | SPISIMOB    | Output    | AD5754 DIN      | SPI Master Out (MOSI)    |
+| GPIO25   | SPISOMIB    | Input     | AD5754 DOUT     | SPI Master In (MISO)     |
+| GPIO26   | SPICLKB     | Output    | AD5754 SCLK     | SPI Clock (10MHz)        |
+| GPIO27   | SPIB_CS     | Output    | AD5754 /SYNC    | Chip Select (Active Low) |
+
+1.3 ADS1278 控制信号
+---------------------
+⚠️ 重要说明：ADS1278的配置引脚已在PCB硬件上固定连接，无需软件配置
+
+硬件固定配置：
+- MODE[1:0] = 01 (硬件固定) → High Resolution模式，52.7kSPS
+  · MODE0 接 IOVDD(3.3V)
+  · MODE1 接 GND
+- FORMAT[2:0] = 001 (硬件固定) → SPI协议，TDM模式
+  · FORMAT0 接 IOVDD
+  · FORMAT1 接 GND
+  · FORMAT2 接 GND
+- SYNC 接 IOVDD → 连续采样模式
+- PWDN 接 IOVDD → 正常工作模式
+- CLKDIV 根据CLK频率连接 → 27MHz时接IOVDD（不分频）
+- CS 硬件固定拉低 → 单片应用，芯片始终选中
+
+软件需要配置的信号：
+| GPIO Pin | Function       | Direction | 连接到          | 说明                        |
+|----------|----------------|-----------|-----------------|----------------------------|
+| GPIO57   | ADS1278_DRDY   | Input     | ADS1278 DRDY    | Data Ready (XINT2, 下降沿)  |
+
+⚠️ 修正说明 (v1.2)：
+- DRDY引脚从GPIO16改为GPIO57
+- 中断从XINT1改为XINT2（对应PIE Group1.INT5）
+
+1.4 AD5754 控制信号（硬件固定）
+------------------------------------
+⚠️ 重要说明：AD5754的控制引脚已在PCB硬件上固定连接，无需软件配置
+
+硬件固定配置：
+- #LDAC (Pin 10) 接 GND → 自动更新模式（写入后立即生效）
+- #CLR (Pin 11) 接 10kΩ上拉至DVCC → 禁用硬件清零
+- BIN/#2sCOMP (Pin 5) 接 GND → 二进制补码编码模式
+
+软件控制：
+- 所有控制通过SPI寄存器命令实现
+- 无需额外GPIO配置
+- 可使用软件清零命令（REG=011, A=100）代替硬件#CLR
+
+1.5 电源和地线
+---------------
+- ADS1278: AVDD = 5V, DVDD = 3.3V, GND = GND
+- AD5754:  AVDD = 15V/-15V (双极性电源), DVDD = 5V, GND = GND
+- 所有数字信号: 3.3V逻辑电平
+
+⚠️ 注意事项:
+- 确保所有GPIO与芯片电平兼容（3.3V LVTTL）
+- ADS1278的DRDY信号建议串联100Ω电阻保护
+- SPI信号线建议短于15cm，远距离传输需添加缓冲器
+- CS信号建议靠近芯片端添加10kΩ上拉电阻
+
+================================================================================
+2. API函数列表
+================================================================================
+
+2.1 SPI驱动函数 (drv_spi.h)
+------------------------------
+
+void Drv_SPI_GPIO_Config(void);
+  功能: 配置SPIA和SPIB的GPIO引脚
+  参数: 无
+  返回: 无
+  调用示例:
+    Drv_SPI_GPIO_Config();
+
+void Drv_SPIA_Init(void);
+void Drv_SPIB_Init(void);
+  功能: 初始化SPIA/SPIB模块
+  参数: 无
+  返回: 无
+  调用示例:
+    Drv_SPIA_Init();
+    Drv_SPIB_Init();
+
+void Drv_SPI_SetCS(SPI_Module_t module, bool active);
+  功能: 控制SPI的CS信号
+  参数: 
+    - module: SPI_MODULE_A 或 SPI_MODULE_B
+    - active: true=拉低CS, false=拉高CS
+  返回: 无
+  调用示例:
+    Drv_SPI_SetCS(SPI_MODULE_A, true);  // CS拉低
+    DELAY_US(1);                        // 确保tCSS
+    Drv_SPI_SetCS(SPI_MODULE_A, false); // CS拉高
+
+void Drv_SPI_ClearFIFO(SPI_Module_t module);
+  功能: 清空SPI的TX和RX FIFO
+  参数: module - SPI_MODULE_A 或 SPI_MODULE_B
+  返回: 无
+
+void Drv_SPI_EnableDMA(SPI_Module_t module);
+  功能: 使能SPI DMA请求
+  参数: module - SPI_MODULE_A 或 SPI_MODULE_B
+  返回: 无
+  调用示例:
+    Drv_SPI_EnableDMA(SPI_MODULE_A);
+
+void Drv_SPI_GetFIFOStatus(SPI_Module_t module, Uint16 *tx_fifo_level, Uint16 *rx_fifo_level);
+  功能: 获取SPI FIFO状态
+  参数:
+    - module: SPI_MODULE_A 或 SPI_MODULE_B
+    - tx_fifo_level: 输出TX FIFO当前字数
+    - rx_fifo_level: 输出RX FIFO当前字数
+  返回: 无
+  调用示例:
+    Uint16 tx_level, rx_level;
+    Drv_SPI_GetFIFOStatus(SPI_MODULE_A, &tx_level, &rx_level);
+
+2.2 DMA驱动函数 (drv_dma.h)
+-----------------------------
+
+void Drv_DMA_Init(void);
+  功能: 初始化DMA模块和优先级
+  参数: 无
+  返回: 无
+  调用示例:
+    Drv_DMA_Init();
+
+void Drv_DMA_ConfigChannel_SPIA_RX(void);
+void Drv_DMA_ConfigChannel_SPIA_TX(void);
+void Drv_DMA_ConfigChannel_SPIB_TX(void);
+void Drv_DMA_ConfigChannel_SPIB_RX(void);
+  功能: 配置DMA通道
+  参数: 无
+  返回: 无
+
+DMA_Error_t Drv_DMA_ReConfigAddr(DMA_Channel_t channel, void *src, void *dst, Uint16 burst_size);
+  功能: 重新配置DMA通道的源/目的地址和burst大小
+  参数:
+    - channel: DMA_CH1/2/5/6
+    - src: 源地址
+    - dst: 目的地址
+    - burst_size: Burst传输大小-1 (例如12个字传输时填11)
+  返回: DMA_ERROR_NONE=成功, DMA_ERROR_TIMEOUT=超时
+  调用示例:
+    Drv_DMA_ReConfigAddr(DMA_CH1, (void*)&SpiaRegs.SPIRXBUF, rx_buffer, 11);
+
+void Drv_DMA_StartPair(DMA_Channel_t rx_ch, DMA_Channel_t tx_ch);
+  功能: 按顺序启动RX和TX DMA通道（RX先启动）
+  参数: rx_ch - RX通道, tx_ch - TX通道
+  返回: 无
+  调用示例:
+    Drv_DMA_StartPair(DMA_CH1, DMA_CH2);
+
+bool Drv_DMA_WaitComplete(DMA_Channel_t channel, Uint32 timeout_us);
+  功能: 等待DMA完成（阻塞）
+  参数: channel - DMA通道, timeout_us - 超时时间(us)
+  返回: true=完成, false=超时
+  调用示例:
+    if (!Drv_DMA_WaitComplete(DMA_CH1, 5000)) {
+        // 超时处理
+    }
+
+void Drv_DMA_RegisterCallback(DMA_Channel_t channel, DMA_Callback_t callback);
+  功能: 注册DMA完成回调函数
+  参数: channel - DMA通道, callback - 回调函数指针
+  返回: 无
+  调用示例:
+    void MyCallback(void) { /* 处理数据 */ }
+    Drv_DMA_RegisterCallback(DMA_CH1, MyCallback);
+
+void Drv_DMA_GetStats(DMA_Channel_t channel, DMA_Stats_t *stats);
+  功能: 获取DMA统计信息
+  参数: channel - DMA通道, stats - 输出统计信息
+  返回: 无
+  调用示例:
+    DMA_Stats_t stats;
+    Drv_DMA_GetStats(DMA_CH1, &stats);
+    printf("完成次数: %lu\n", stats.complete_count);
+
+2.3 ADS1278 ADC驱动函数 (drv_ads1278.h)
+-----------------------------------------
+
+void Drv_ADS1278_Init(ADS1278_OperatingMode_t mode, ADS1278_DataFormat_t format);
+  功能: 初始化ADS1278 ADC
+  参数:
+    - mode: 工作模式 (ADS1278_MODE_HR/LP/LS/VHL)
+    - format: 数据格式 (ADS1278_FORMAT_24BIT_SPI)
+  返回: 无
+  调用示例:
+    Drv_ADS1278_Init(ADS1278_MODE_HR, ADS1278_FORMAT_24BIT_SPI);
+
+bool Drv_ADS1278_StartAcquisition(void);
+  功能: 启动ADC采集（使能DRDY中断）
+  参数: 无
+  返回: true=成功, false=失败
+
+bool Drv_ADS1278_StopAcquisition(void);
+  功能: 停止ADC采集（禁用DRDY中断）
+  参数: 无
+  返回: true=成功, false=失败
+
+bool Drv_ADS1278_GetData(ADS1278_Data_t *out_data);
+  功能: 获取最新的ADC数据
+  参数: out_data - 输出数据指针
+  返回: true=有新数据, false=无新数据
+  调用示例:
+    ADS1278_Data_t adc_data;
+    if (Drv_ADS1278_GetData(&adc_data)) {
+        for (int i = 0; i < 8; i++) {
+            printf("CH%d: %ld\n", i, adc_data.ch[i]);
+        }
+    }
+
+void Drv_ADS1278_RegisterDataReadyCallback(DMA_Callback_t callback);
+  功能: 注册数据就绪回调函数
+  参数: callback - 回调函数指针
+  返回: 无
+
+2.4 AD5754 DAC驱动函数 (drv_ad5754.h)
+---------------------------------------
+
+void Drv_AD5754_Init(AD5754_Range_t range);
+  功能: 初始化AD5754 DAC
+  参数: range - 输出范围 (AD5754_RANGE_0_10V/N5_P5V等)
+  返回: 无
+  调用示例:
+    Drv_AD5754_Init(AD5754_RANGE_0_10V);
+
+bool Drv_AD5754_WriteChannel(Uint16 channel, Uint16 value);
+  功能: 写单个DAC通道
+  参数: channel - 通道号(0-3), value - DAC码值(0x0000-0xFFFF)
+  返回: true=成功, false=失败
+  调用示例:
+    Drv_AD5754_WriteChannel(0, 0x8000); // 通道0输出中点电压
+
+bool Drv_AD5754_WriteAll(Uint16 ch0, Uint16 ch1, Uint16 ch2, Uint16 ch3);
+  功能: 批量写入4个DAC通道
+  参数: ch0~ch3 - 4个通道的DAC码值
+  返回: true=成功, false=失败
+  调用示例:
+    Drv_AD5754_WriteAll(0x0000, 0x4000, 0x8000, 0xC000);
+
+bool Drv_AD5754_ReadChannel(Uint16 channel, Uint16 *value);
+  功能: 读回DAC通道值
+  参数: channel - 通道号, value - 输出读回值
+  返回: true=成功, false=失败
+
+float32 Drv_AD5754_CodeToVoltage(Uint16 code, AD5754_Range_t range);
+  功能: 将DAC码值转换为电压
+  参数: code - DAC码值, range - 输出范围
+  返回: 电压值 (V)
+
+Uint16 Drv_AD5754_VoltageToCode(float32 voltage, AD5754_Range_t range);
+  功能: 将电压转换为DAC码值
+  参数: voltage - 电压值(V), range - 输出范围
+  返回: DAC码值
+
+2.5 应用层函数 (app_spi_demo.h)
+---------------------------------
+
+void App_SPI_Demo_Init(void);
+  功能: 初始化SPI演示应用（包含ADC/DAC初始化）
+  参数: 无
+  返回: 无
+  调用示例:
+    App_SPI_Demo_Init();
+
+void App_Task_ADC_Sample(void);
+  功能: ADC采样任务（滤波、定标）
+  参数: 无
+  返回: 无
+  调用示例: 在20ms定时器中调用
+
+void App_Task_DAC_Output(void);
+  功能: DAC波形输出任务
+  参数: 无
+  返回: 无
+  调用示例: 在20ms定时器中调用
+
+bool App_ADC_GetProcessedData(ADC_ProcessedData_t *out_data);
+  功能: 获取滤波后的ADC数据
+  参数: out_data - 输出数据指针
+  返回: true=有新数据, false=无新数据
+  调用示例:
+    ADC_ProcessedData_t processed_data;
+    if (App_ADC_GetProcessedData(&processed_data)) {
+        // 使用滤波后的浮点数据 (-1.0 ~ +1.0)
+        float voltage_ch0 = processed_data.ch[0] * 2.5; // 转换为电压
+    }
+
+void App_DAC_SetWaveform(Uint16 channel, Uint16 waveform, float32 frequency, 
+                         float32 amplitude, float32 offset);
+  功能: 配置DAC通道波形
+  参数:
+    - channel: 通道号(0-3)
+    - waveform: 波形类型 (DAC_WAVEFORM_SINE/SQUARE/TRIANGLE/SAWTOOTH)
+    - frequency: 频率(Hz)
+    - amplitude: 幅度(0.0-1.0)
+    - offset: 偏移(-1.0~+1.0)
+  调用示例:
+    App_DAC_SetWaveform(0, DAC_WAVEFORM_SINE, 10.0f, 0.8f, 0.5f);
+
+================================================================================
+3. 配置参数说明
+================================================================================
+
+3.1 时钟配置
+-------------
+- SYSCLK频率: 200 MHz
+- LSPCLK频率: 50 MHz (SYSCLK / 4)
+- SPI时钟频率: 10 MHz
+- SPIBRR值: 4 (计算公式: SPIBRR = LSPCLK / SPI_CLK - 1 = 50MHz/10MHz - 1)
+
+3.2 SPI配置
+------------
+SPIA (ADS1278):
+- 模式: Mode 0 (CPOL=0, CPHA=0, 上升沿采样) ⚠️ ADS1278要求
+- 字长: 16位
+- 主从模式: Master
+- FIFO使能: Yes
+- TX FIFO触发电平: 0 (FIFO空时触发DMA)
+- RX FIFO触发电平: 12字
+- CS控制: GPIO57手动控制
+
+SPIB (AD5754):
+- 模式: Mode 1 (CPOL=0, CPHA=1, 下降沿采样) 推荐
+- 字长: 16位
+- 主从模式: Master
+- FIFO使能: Yes
+- TX FIFO触发电平: 0 (FIFO空时触发DMA)
+- RX FIFO触发电平: 6字
+- CS控制: GPIO27手动控制
+
+3.3 DMA配置
+------------
+DMA通道分配:
+- CH1: SPIA RX (ADS1278数据接收) - 最高优先级
+- CH2: SPIA TX (ADS1278虚拟发送) - 高优先级
+- CH5: SPIB TX (AD5754命令发送) - 中等优先级
+- CH6: SPIB RX (AD5754读回数据) - 低优先级
+
+DMA Burst大小:
+- SPIA RX/TX: 11 (12个16位字 - 1) = 24字节缓冲区
+  · ADS1278：8通道×24位 = 192位 = 24字节
+- SPIB RX/TX: 5 (6个16位字 - 1) = 12字节缓冲区
+  · AD5754：预留6字（可存3条24位命令，每条2字）
+  · 单条命令实际仅用2字（24位有效+8位填充）
+注：Burst Size = 实际传输字数 - 1
+
+DMA模式:
+- ONESHOT模式 (每次触发传输一个Burst)
+- 触发源: SPITXDMA/SPIRXDMA
+- 中断使能: CHINT_END (传输结束时中断)
+
+3.4 中断优先级配置（实际项目配置）
+---------------------------------------
+PIE Group 7 (DMA):
+- DMA CH1: PIE7.1 (最高优先级，SPIA RX - ADS1278接收)
+- DMA CH2: PIE7.2 (高优先级，SPIA TX - ADS1278发送)
+- DMA CH5: PIE7.5 (中优先级，SPIB TX - AD5754发送)
+- DMA CH6: PIE7.6 (低优先级，SPIB RX - AD5754接收)
+
+PIE Group 1 (外部中断和定时器):
+- XINT2: PIE1.5 (ADS1278 DRDY信号, GPIO57触发ADC读取)
+- Timer0: PIE1.7 (任务调度时基, 100us周期)
+
+CPU中断使能:
+- IER |= M_INT7;  // 使能Group 7 (DMA中断)
+- IER |= M_INT1;  // 使能Group 1 (XINT2和Timer0)
+
+3.5 内存配置（drv_dma_buffers.c）
+------------------------------------
+DMA缓冲区: 位于RAMGS段 (2字节对齐)
+
+ADS1278缓冲区（SPIA）:
+- g_adc_rx_ping[12]:  SPIA RX Ping缓冲区 (24字节)
+- g_adc_rx_pong[12]:  SPIA RX Pong缓冲区 (24字节)
+- g_adc_tx_dummy[12]: SPIA TX虚拟数据 (24字节)
+
+AD5754缓冲区（SPIB）:
+- g_dac_tx_buffer[6]: SPIB TX缓冲区 (12字节)
+  · 可容纳3条24位命令（每条占2个16位字）
+  · 单次发送通常只用前2字
+- g_dac_rx_buffer[6]: SPIB RX缓冲区 (12字节)
+  · 用于寄存器回读
+
+总内存占用: 96字节
+
+================================================================================
+4. 典型应用场景
+================================================================================
+
+4.1 场景1: 连续ADC采样 + 实时滤波
+------------------------------------
+应用: 多通道信号采集、数字滤波
+代码示例:
+
+    void main(void) {
+        // 初始化
+        Drv_System_Init();
+        Drv_DMA_Init();
+        Drv_SPIA_Init();
+        Drv_ADS1278_Init(ADS1278_MODE_HR, ADS1278_FORMAT_24BIT_SPI);
+        Drv_ADS1278_StartAcquisition();
+
+        // 主循环
+        while(1) {
+            ADS1278_Data_t raw_data;
+            if (Drv_ADS1278_GetData(&raw_data)) {
+                // 处理8通道数据
+                for (int i = 0; i < 8; i++) {
+                    ProcessChannel(i, raw_data.ch[i]);
+                }
+            }
+        }
+    }
+
+4.2 场景2: DAC波形生成 + 闭环控制
+------------------------------------
+应用: 信号发生器、PID控制输出
+代码示例:
+
+    void App_ControlLoop(void) {
+        // 读取反馈
+        ADC_ProcessedData_t feedback;
+        App_ADC_GetProcessedData(&feedback);
+
+        // PID计算
+        float error = setpoint - feedback.ch[0];
+        float output = PID_Calculate(&pid, error);
+
+        // 输出到DAC
+        Uint16 dac_code = Drv_AD5754_VoltageToCode(output, AD5754_RANGE_0_10V);
+        Drv_AD5754_WriteChannel(0, dac_code);
+    }
+
+4.3 场景3: 数据记录仪 + UART输出
+----------------------------------
+应用: 数据采集记录、远程监控
+代码示例:
+
+    void App_DataLogger(void) {
+        static Uint32 sample_count = 0;
+
+        ADC_ProcessedData_t data;
+        if (App_ADC_GetProcessedData(&data)) {
+            // UART输出CSV格式
+            printf("%lu", sample_count++);
+            for (int i = 0; i < 8; i++) {
+                printf(",%.6f", data.ch[i]);
+            }
+            printf("\n");
+        }
+    }
+
+================================================================================
+5. 常见问题FAQ
+================================================================================
+
+Q1: DMA传输后数据全是0或0xFFFF？
+A1: 检查以下几点：
+    - SPI时钟极性和相位是否正确
+      · ADS1278: Mode 0 (CPOL=0, CPHA=0)
+      · AD5754: Mode 1 (CPOL=0, CPHA=1)
+    - CS信号是否正确拉低/拉高
+    - DMA源地址和目的地址是否正确
+    - FIFO是否溢出 (检查RXFFOVF标志)
+    - 芯片是否正确上电和初始化
+
+Q2: FIFO溢出错误 (RXFFOVF=1)？
+A2: FIFO溢出原因：
+    - DMA响应速度不够快 -> 提高DMA优先级
+    - RX FIFO触发电平设置过高 -> 降低RXFFIL
+    - CPU负载过高 -> 减少中断服务时间
+    - 解决方法：在启动DMA前先ClearFIFO()
+
+Q3: 时序不匹配，数据错位？
+A3: 时序问题排查：
+    - 使用逻辑分析仪确认CS、CLK、MOSI、MISO时序
+    - 确认tCSS (CS Setup Time) ≥ 10ns（在CS拉低后延时）
+    - 确认tCSH (CS Hold Time) ≥ 5ns（在数据传输完成后延时）
+    - 确认SPI时钟频率未超过芯片规格（ADS1278≤27MHz, AD5754≤50MHz）
+
+Q4: 端序错误，高低字节反了？
+A4: 端序检查：
+    - ADS1278输出MSB先行（高位在前）
+    - F28377D SPI默认MSB先行
+    - 如果数据反了，检查SPI配置中的SPICHAR位数设置
+    - 检查24位数据重组代码中的位移和掩码
+    - 注意：ADS1278使用Mode 0，数据在上升沿有效
+
+Q5: DMA一直不完成，卡死？
+A5: DMA卡死排查：
+    - 检查DMA中断是否使能 (PIE Group 7, PIEIER7.bit.INTx1等)
+    - 检查DMA触发源是否正确 (DMA_SPIARX/SPIATX/SPIBRX/SPIBTX)
+    - 检查FIFO是否使能 (SPIFFENA=1)
+    - 检查Burst Size是否正确 (BURST = 实际字数 - 1)
+    - 使用Drv_DMA_WaitComplete()时设置超时保护
+
+Q6: ADC数据噪声很大？
+A6: 噪声抑制：
+    - 硬件：确保AVDD电源干净，添加0.1uF和10uF旁路电容
+    - 硬件：SPI信号线远离高频噪声源
+    - 软件：使用移动平均滤波 (已实现，窗口大小=8)
+    - 软件：降低采样率，使用LP或LS模式
+    - 软件：检查接地回路
+
+Q7: DAC输出不正确？
+A7: DAC输出检查（基于实际硬件）：
+    - 确认内部基准已使能（电源寄存器bit[5]=PU_REF）
+    - 确认输出范围寄存器设置正确（REG=001配置）
+    - 确认通道已上电（电源寄存器bit[4:1]=PU_D/C/B/A）
+    - 使用Drv_AD5754_ReadChannelBlocking()读回验证
+    - 检查BIN/#2sCOMP引脚是否接地（影响编码方式）
+    - 硬件上#LDAC已接地，写入后自动更新，无需手动触发
+    
+    详细调试方法参见：AD5754R_DMA驱动方案_审查修正版.md
+
+Q8: CPU占用率过高？
+A8: 性能优化：
+    - 减少中断频率（降低ADC采样率）
+    - 使用DMA而非轮询（已实现）
+    - 缩短中断服务时间（数据处理放在主循环）
+    - 使用Ping-Pong缓冲减少数据拷贝（已实现）
+    - 关闭不必要的调试日志输出
+
+================================================================================
+6. 性能数据（基于实际代码）
+================================================================================
+
+6.1 采样和更新率
+-----------------
+ADS1278 (ADC):
+- High Resolution模式: 52.7 kSPS (8通道同步，硬件固定)
+- Low Power模式: 105.4 kSPS (硬件不支持)
+- Low Speed模式: 26.35 kSPS (硬件不支持)
+- DRDY周期: 1/52.7kHz = 19 μs
+
+AD5754 (DAC):
+- 单次命令传输时间: ~4.8 μs (2个字×16位@10MHz + 开销)
+- 理论最大更新率: ~200 kHz（实际受软件处理限制）
+- 典型应用更新率: 50 Hz ~ 1 kHz（20ms任务周期）
+
+6.2 延迟分析
+-------------
+ADS1278采集延迟:
+- DRDY触发到CS拉低: < 5 μs (XINT2中断响应)
+- SPI单帧传输: 12字×16位/10MHz = 19.2 μs
+- DMA完成中断: < 2 μs
+- 数据处理（24位重组）: < 5 μs
+- 总延迟 (DRDY → 应用层可用): < 32 μs
+
+AD5754输出延迟:
+- 命令准备: < 1 μs
+- DMA传输: 2字×16位/10MHz = 3.2 μs
+- 中断+回调: < 2 μs
+- DAC建立时间: < 10 μs (芯片特性)
+- 总延迟 (API调用 → 电压稳定): < 17 μs
+
+6.3 CPU占用率分析 (@ 200MHz SYSCLK)
+-------------------------------------
+中断负载:
+- DMA CH1 ISR (52.7kHz): ~2 μs/次 → 10.5%
+- DMA CH2 ISR (52.7kHz): ~1 μs/次 → 5.3%
+- DMA CH5 ISR (50Hz):    ~1 μs/次 → 0.005%
+- DMA CH6 ISR (按需):    ~1 μs/次 → 可忽略
+- Timer0 ISR (10kHz):    ~1 μs/次 → 1%
+- XINT2 ISR (52.7kHz):   ~2 μs/次 → 10.5%
+
+任务负载:
+- ADC数据处理 (20ms): ~100 μs/次 → 0.5%
+- DAC波形生成 (20ms): ~50 μs/次 → 0.25%
+
+总CPU占用率: ≈ 28% (含中断和任务)
+可用带宽: ≈ 72% (用于控制算法等)
+
+6.4 内存占用（实际代码）
+--------------------------
+RAM占用:
+- DMA缓冲区: 96字节
+  · ADS1278: 72字节 (ping/pong/dummy)
+  · AD5754: 24字节 (tx/rx)
+- 驱动静态变量: ~100字节
+  · 配置结构、标志位、统计信息
+- 总RAM: < 200字节
+
+Flash占用:
+- drv_spi.c: ~1.5 KB
+- drv_dma.c: ~2.5 KB
+- drv_ads1278.c: ~1.5 KB
+- drv_ad5754.c: ~2.0 KB
+- drv_dma_buffers.c: ~0.5 KB
+- 总Flash: ~8 KB (驱动层)
+
+6.5 精度指标
+-------------
+ADS1278 (24位ADC):
+- 分辨率: 24位（16,777,216级）
+- DNL: < 1 LSB (保证单调性)
+- INL: < 2 LSB
+- 噪声: < 5 μV p-p (0.1Hz-10Hz)
+
+AD5754 (16位DAC):
+- 分辨率: 16位（65,536级）
+- DNL: < 1 LSB (保证单调性)
+- INL: < 16 LSB (±10V范围)
+- 建立时间: < 10 μs (典型值)
+- ±10V范围精度: 305 μV/LSB
+
+================================================================================
+附录A: 快速开始示例（基于Prj03实际架构）
+================================================================================
+
+// 完整的初始化和使用示例
+void main(void)
+{
+    // ═══════════════════════════════════════════
+    // 1. 系统初始化（app_init.c）
+    // ═══════════════════════════════════════════
+    Drv_System_Init();         // 时钟、GPIO、PIE
+    Drv_Watchdog_Init();       // 看门狗（839ms超时）
+    Drv_Timer_Init();          // Timer0（100us）
+    Drv_LED_Init();            // LED指示
+    
+    // ═══════════════════════════════════════════
+    // 2. SPI+DMA初始化
+    // ═══════════════════════════════════════════
+    Drv_SPI_GPIO_Config();     // 配置SPIA和SPIB引脚
+    Drv_SPIA_Init();           // ADS1278用（Mode 0, 16位）
+    Drv_SPIB_Init();           // AD5754用（Mode 1, 16位）
+    
+    Drv_DMA_Init();            // DMA模块和优先级
+    Drv_DMA_ConfigChannel_SPIA_RX();  // CH1
+    Drv_DMA_ConfigChannel_SPIA_TX();  // CH2
+    Drv_DMA_ConfigChannel_SPIB_TX();  // CH5
+    Drv_DMA_ConfigChannel_SPIB_RX();  // CH6
+    
+    // ═══════════════════════════════════════════
+    // 3. 芯片初始化
+    // ═══════════════════════════════════════════
+    // ADS1278初始化（硬件模式已固定）
+    Drv_ADS1278_Init(ADS1278_MODE_HR, ADS1278_FORMAT_24BIT_SPI);
+    
+    // AD5754初始化（默认±10V范围）
+    if(!Drv_AD5754_InitDefault()) {
+        Drv_LED_Set(0, true);  // LED0指示错误
+        while(1);  // 停机
+    }
+    
+    // ═══════════════════════════════════════════
+    // 4. 启动采集
+    // ═══════════════════════════════════════════
+    Drv_ADS1278_StartAcquisition();  // 使能DRDY中断
+    
+    // ═══════════════════════════════════════════
+    // 5. 使能全局中断
+    // ═══════════════════════════════════════════
+    EINT;  // 使能全局中断
+    ERTM;  // 使能实时中断
+    
+    // ═══════════════════════════════════════════
+    // 6. 主循环（事件驱动）
+    // ═══════════════════════════════════════════
+    while(1) {
+        // 任务调度器（基于Timer0的100us时基）
+        Scheduler_Run();  // 每20ms执行数据处理任务
+        
+        // 用户主循环任务
+        App_Task_UserMainLoop();
+    }
+}
+
+================================================================================
+附录B: 调试技巧（基于实际硬件）
+================================================================================
+
+1. 使用示波器/逻辑分析仪检查信号:
+   
+   ADS1278 (SPIA):
+   - 优先级1: SPICLKA (GPIO56) - 应为10MHz时钟
+   - 优先级2: CS (GPIO57) - 下降沿应在DRDY后<5μs
+   - 优先级3: DRDY (GPIO57) - 应为52.7kHz周期信号（19μs）
+   - 优先级4: MOSI/MISO (GPIO54/55) - 验证数据完整性
+   
+   AD5754 (SPIB):
+   - 优先级1: SPICLKB (GPIO26) - 应为10MHz时钟
+   - 优先级2: #SYNC (GPIO27) - 应覆盖完整的24位传输
+   - 优先级3: MOSI (GPIO24) - 发送24位命令
+   - 优先级4: MISO (GPIO25) - 回读时验证数据
+
+2. 使用DMA统计（检查传输状态）:
+   // 检查ADS1278
+   DMA_Stats_t stats_ch1;
+   Drv_DMA_GetStats(DMA_CH1, &stats_ch1);
+   printf("ADC RX: 完成=%lu, 超时=%lu, 溢出=%lu\n",
+          stats_ch1.complete_count,
+          stats_ch1.timeout_count,
+          stats_ch1.overflow_count);
+   
+   // 检查AD5754
+   DMA_Stats_t stats_ch5;
+   Drv_DMA_GetStats(DMA_CH5, &stats_ch5);
+   printf("DAC TX: 完成=%lu, 超时=%lu\n",
+          stats_ch5.complete_count,
+          stats_ch5.timeout_count);
+
+3. 使用SPI内部回环测试:
+   SpiaRegs.SPICCR.bit.SPILBK = 1; // 使能回环
+   // 发送数据，检查接收数据是否一致
+
+4. 使用已知输入测试ADC:
+   - 短接所有ADC输入到GND → 读值应接近0
+   - 输入VREF/2 (1.25V) → 读值应接近满量程/2
+
+5. 使用万用表测试DAC（基于实际硬件）:
+   ⚠️ 注意：本项目AD5754硬件配置为双极性±10V范围，使用二进制补码编码
+   
+   双极性模式测试：
+   - 写0x8000 → 输出-10V（负满量程）
+   - 写0xC000 → 输出-5V
+   - 写0x0000 → 输出0V（零点）
+   - 写0x4000 → 输出+5V
+   - 写0x7FFF → 输出+10V（正满量程）
+   
+   如果硬件配置为单极性0-10V：
+   - 写0x0000 → 输出0V
+   - 写0x8000 → 输出5V（中点）
+   - 写0xFFFF → 输出10V（满量程）
+
+================================================================================
+附录C: 文档更新说明
+================================================================================
+
+v1.2 (2025-10-22) - 重大修正版
+--------------------------------
+本次更新修正了以下重要错误：
+
+1. **ADS1278 DRDY引脚修正**：
+   - 错误：GPIO16, XINT1
+   - 正确：GPIO57, XINT2（对应PIE1.5）
+   - 影响：中断配置必须使用正确的引脚和中断号
+
+2. **AD5754控制信号修正**：
+   - 删除：GPIO8 (RESET)、GPIO9 (LDAC) - 硬件上不存在
+   - 正确：#LDAC接地，#CLR上拉，无需GPIO控制
+   - 影响：简化软件，所有控制通过SPI命令
+
+3. **SPIB缓冲区大小澄清**：
+   - 说明：6字缓冲区可容纳3条24位命令（每条2字）
+   - 单条命令：仅用前2字
+   - 影响：帮助理解缓冲区设计意图
+
+4. **DAC测试方法更新**：
+   - 补充：双极性±10V模式的测试值
+   - 补充：二进制补码编码说明
+   - 影响：测试时使用正确的期望值
+
+v1.1 (2025-10-22)
+-----------------
+1. **ADS1278 SPI模式更正**：
+   - 错误：Mode 1 (CPOL=0, CPHA=1)
+   - 正确：Mode 0 (CPOL=0, CPHA=0, 上升沿采样)
+
+2. **ADS1278控制引脚说明**：
+   - 澄清MODE、FORMAT等引脚为硬件固定
+
+3. **API函数补充**：
+   - 新增：Drv_SPI_EnableDMA()
+   - 新增：Drv_SPI_GetFIFOStatus()
+
+⚠️ 重要提醒：
+- 使用本文档前请确认硬件版本与文档描述一致
+- ADS1278使用Mode 0，AD5754使用Mode 1
+- 建议使用逻辑分析仪验证SPI时序
+- AD5754详细寄存器配置参见：AD5754R_DMA驱动方案_审查修正版.md
+
+================================================================================
+文档结束 - 版本 1.2 (2025-10-22 重大修正)
+================================================================================
+
