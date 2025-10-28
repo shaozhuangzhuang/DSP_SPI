@@ -14,6 +14,7 @@
 
 #include "F28x_Project.h"
 #include "F2837xD_Ipc_drivers.h"
+#include "Sci.h"
 
 // ===== 全局变量定义 =====
 // 共享RAM数组定义（减少到24个元素）
@@ -24,7 +25,7 @@ uint16_t c2_r_array[24];       // CPU2只读，CPU1写入，映射到GS1（CPU1�
 
 // 20ms周期控制标志
 volatile uint16_t flag_20ms_write = 0;  // 20ms写入标志
-
+uint16_t SCI_Send_Timer = 0;
 
 
 // ===== 函数原型声明 =====
@@ -50,6 +51,24 @@ void main(void)
     // ===== 主循环 =====
     while(1)
     {
+        SCI_RX();
+        if(SCI_Send_Timer >= 20)
+        {
+            SCI_Send_Timer = 0;
+            SCI_TO_Sim();//向上位机发送数据
+
+            //============================Trigger ISR=============================================
+            /*    清错误标志，串口发送前进行软复位，防止复位影响发送缓存数据         */
+            if( SciaRegs.SCIRXST.bit.RXERROR )
+            {
+                SciaRegs.SCICTL1.bit.SWRESET = 0;
+                SciaRegs.SCICTL1.bit.SWRESET = 1;
+            }
+            // 清串口发送中断标志
+            SciaRegs.SCIFFTX.bit.TXFIFORESET = 1;
+            SciaRegs.SCIFFTX.bit.TXFFINTCLR = 1;                    // Clear SCI Interrupt Flag 清串口发送中断标志，发送
+        }
+
         // 处理20ms周期写入任务
         if(flag_20ms_write)
         {
@@ -135,8 +154,7 @@ void Shared_Ram_dataRead_c2(void)
 void System_Init(void)
 {
     // ===== 步骤1: 系统控制 =====
-    // 注意：CPU2的系统初始化由CPU1完成，此处跳过
-    // InitSysCtrl();
+     InitSysCtrl();
 
     // ===== 步骤2: 配置中断系统 =====
     DINT;  // 禁用CPU中断
@@ -152,6 +170,8 @@ void System_Init(void)
     // 注册中断向量
     EALLOW;
     PieVectTable.TIMER0_INT = &TIMER0_ISR;
+    PieVectTable.SCIA_TX_INT = &SCIA_TX_ISR;
+    PieVectTable.SCIA_RX_INT = &SCIA_RX_ISR;
     // 注意：不再注册IPC中断
     EDIS;
 
@@ -159,16 +179,25 @@ void System_Init(void)
     // 等待CPU1分配GS0内存给CPU2
     while(!(MemCfgRegs.GSxMSEL.bit.MSEL_GS0));
 
-    // ===== 步骤4: 初始化并启动定时器 =====
+    // ===== 步骤4: 等待CPU1完成SCIA配置 =====
+    // 等待CPU1完成SCIA的GPIO配置和所有权分配
+    while(!IPCRtoLFlagBusy(IPC_FLAG12));
+    IPCRtoLFlagAcknowledge(IPC_FLAG12);
+
+    // ===== 步骤5: 初始化并启动定时器 =====
     InitCpuTimers();
     ConfigCpuTimer(&CpuTimer0, 200, 50);  // 200MHz, 50us周期
     CpuTimer0Regs.TCR.all = 0x4000;       // 启动定时器
 
-    // ===== 步骤5: 使能中断 =====
+    // ===== 步骤6: 使能中断 =====
     // TIMER0中断使能已在 EnableInterrupts() 中配置
     EnableInterrupts();
 
-    // ===== 步骤6: 通知CPU1已就绪 =====
+    // ===== 步骤7: 初始化SCIA =====
+    // CPU1配置完成，现在可以安全配置SCIA寄存器
+    InitSci();
+
+    // ===== 步骤8: 通知CPU1已就绪 =====
     IPCLtoRFlagSet(IPC_FLAG17);
 }
 

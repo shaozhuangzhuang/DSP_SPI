@@ -86,7 +86,6 @@ void EnableInterrupts()
     IER |= M_INT1;
     IER |= M_INT7;
     IER |= M_INT8;
-    IER |= M_INT9;
     IER |= M_INT12;
     IER |= M_INT13;
     IER |= M_INT14;
@@ -96,14 +95,6 @@ void EnableInterrupts()
 
     PieCtrlRegs.PIEIER1.bit.INTx7 = 1;
 
-
-    PieCtrlRegs.PIEIER9.bit.INTx1 = 1;  // Enable all SCIA RXINT interrupt
-    PieCtrlRegs.PIEIER9.bit.INTx2 = 1;  // Enable all SCIA TXINT interrupt
-    PieCtrlRegs.PIEIER8.bit.INTx5 = 1;  // Enable all SCIC RXINT interrupt
-    PieCtrlRegs.PIEIER8.bit.INTx6 = 1;  // Enable all SCIC TXINT interrupt
-    PieCtrlRegs.PIEIER9.bit.INTx5 = 1;     // Enable all CANA INT0 interrupt
-    PieCtrlRegs.PIEIER7.bit.INTx1 = 1;   // 使能McBsp的发送中断
-    PieCtrlRegs.PIEIER7.bit.INTx2 = 1;   // 使能McBsp的接收中断
     //
 //  PieCtrlRegs.PIEACK.all = 0xFFFF;
 

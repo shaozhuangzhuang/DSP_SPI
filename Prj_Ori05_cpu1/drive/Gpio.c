@@ -1,7 +1,7 @@
 /*
  * Gpio.c
  *
- *  Created on: 2022ƒÍ8‘¬12»’
+ *  Created on: 2022ÔøΩÔøΩ8ÔøΩÔøΩ12ÔøΩÔøΩ
  *      Author: 110
  */
 
@@ -81,80 +81,21 @@
         EDIS;
     }
 
-    void Gpioselect()
-    {
-        EALLOW;
-
-//        GpioCtrlRegs.GPBDIR.bit.GPIO41 = 1;         // A0
-//        GpioCtrlRegs.GPBDIR.bit.GPIO48 = 1;         // A1
-//        GpioCtrlRegs.GPBDIR.bit.GPIO50 = 1;         // SAMPLE
-//        GpioCtrlRegs.GPBDIR.bit.GPIO61 = 1;         // RESET
-//        GpioCtrlRegs.GPBDIR.bit.GPIO49 = 1;         // WR
-
-//        GPIO_SetupPinMux(26, GPIO_MUX_CPU1, 0);
-//        GPIO_SetupPinOptions(26, GPIO_OUTPUT, GPIO_PUSHPULL);
-
-        GPIO_SetupPinMux(58,GPIO_MUX_CPU1,0);
-        GPIO_SetupPinOptions(58, GPIO_OUTPUT,GPIO_PUSHPULL);
-//
-//        GPIO_SetupPinMux(24, GPIO_MUX_CPU1, 0);
-//        GPIO_SetupPinOptions(24, GPIO_OUTPUT, GPIO_PUSHPULL);
-//
-//        GPIO_SetupPinMux(19,GPIO_MUX_CPU1,0);
-//        GPIO_SetupPinOptions(19, GPIO_OUTPUT,GPIO_PUSHPULL);
-//
-//
-//        GPIO_SetupPinMux(1,GPIO_MUX_CPU1,0);
-//        GPIO_SetupPinOptions(1, GPIO_OUTPUT,GPIO_PUSHPULL);
-//
-//        GPIO_SetupPinMux(27,GPIO_MUX_CPU1,0);
-//        GPIO_SetupPinOptions(27, GPIO_OUTPUT,GPIO_OUTPUT);
-//
-//        GPIO_SetupPinMux(115, GPIO_MUX_CPU1, 0);
-//        GPIO_SetupPinOptions(115, GPIO_OUTPUT, 1);
-//        GpioDataRegs.GPDSET.bit.GPIO115 = 1;
-//
-//        GPIO_SetupPinMux(116, GPIO_MUX_CPU1, 0);
-//        GPIO_SetupPinOptions(116, GPIO_OUTPUT, 1);
-//        GpioDataRegs.GPDDAT.bit.GPIO116 = 1;
-
-//        GPIO_SetupPinMux(50,GPIO_MUX_CPU1,0);
-//        GPIO_SetupPinOptions(50, GPIO_OUTPUT,GPIO_PUSHPULL);
-//
-//
-//        GPIO_SetupPinMux(61,GPIO_MUX_CPU1,0);
-//        GPIO_SetupPinOptions(61, GPIO_OUTPUT,GPIO_PUSHPULL);
-//
-//        GPIO_SetupPinMux(49,GPIO_MUX_CPU1,0);
-//        GPIO_SetupPinOptions(49, GPIO_OUTPUT,GPIO_OUTPUT);
-
-//        GPIO_SetupPinMux(73,GPIO_MUX_CPU2,0);       // DE_B
-//        GPIO_SetupPinOptions(73, GPIO_OUTPUT,1);
-//        GPIO_SetupPinMux(74,GPIO_MUX_CPU2,0);       // /RE_B
-//        GPIO_SetupPinOptions(74, GPIO_OUTPUT,0);
-//
-        GPIO_SetupPinMux(91,GPIO_MUX_CPU2,0);       // DE_C
-        GPIO_SetupPinOptions(91, GPIO_OUTPUT,1);
-        GPIO_SetupPinMux(92,GPIO_MUX_CPU2,0);       // /RE_C
-        GPIO_SetupPinOptions(92, GPIO_OUTPUT,0);
-//
-//        GPIO_SetupPinMux(11,GPIO_MUX_CPU1,0);     // DE_D
-//        GPIO_SetupPinOptions(11, GPIO_OUTPUT,1);
-//        GpioDataRegs.GPASET.bit.GPIO11 = 1;
-//        GPIO_SetupPinMux(12,GPIO_MUX_CPU1,0);     // /RE_D
-//        GPIO_SetupPinOptions(12, GPIO_OUTPUT,0);
-//        GpioDataRegs.GPACLEAR.bit.GPIO12 = 1;
-        EDIS;
-
-    }
 
     void InitSciGpio(void)
     {
-        //¥Æø⁄A GPIO≥ı ºªØ
-        GPIO_SetupPinMux(65, GPIO_MUX_CPU1, 6); // GPIO65 - (SCITXDA)
-        GPIO_SetupPinMux(43, GPIO_MUX_CPU1, 15); // GPIO43 - (SCIRXDA)
-        GPIO_SetupPinOptions(43, GPIO_INPUT, GPIO_ASYNC);
-        GPIO_SetupPinOptions(65, GPIO_OUTPUT, GPIO_PUSHPULL);
+        //‰∏≤Âè£A GPIOÂàùÂßãÂåñ
+        GPIO_SetupPinMux(135, GPIO_MUX_CPU2, 5); // GPIO65 - (SCITXDA)
+        GPIO_SetupPinMux(136, GPIO_MUX_CPU2, 5); // GPIO43 - (SCIRXDA)
+        GPIO_SetupPinOptions(136, GPIO_INPUT, GPIO_ASYNC);
+        GPIO_SetupPinOptions(135, GPIO_OUTPUT, GPIO_PUSHPULL);
+
+        GPIO_SetupPinMux(98,GPIO_MUX_CPU2,0);     // DE_A2
+        GPIO_SetupPinOptions(98, GPIO_OUTPUT,1);
+        GpioDataRegs.GPDSET.bit.GPIO98 = 1;
+        GPIO_SetupPinMux(99,GPIO_MUX_CPU2,0);     // /RE_A2
+        GPIO_SetupPinOptions(99, GPIO_OUTPUT,0);
+        GpioDataRegs.GPDCLEAR.bit.GPIO99 = 1;
 
     }
 

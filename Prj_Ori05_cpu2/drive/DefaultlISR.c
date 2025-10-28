@@ -26,7 +26,7 @@
 
 // 外部变量声明
 extern volatile uint16_t flag_20ms_write;
-
+extern uint16_t SCI_Send_Timer;
 //
 // CPU Timer 0 Interrupt
 // 说明: 50us定时中断，通过计数器实现20ms周期标志设置
@@ -34,7 +34,7 @@ extern volatile uint16_t flag_20ms_write;
 interrupt void TIMER0_ISR(void)
 {
     static uint16_t timer_counter = 0;  // 20ms周期计数器
-    
+    SCI_Send_Timer++;
     // 计数器递增，实现20ms周期 (50us * 400 = 20ms)
     timer_counter++;
     if(timer_counter >= 400)
@@ -1600,45 +1600,27 @@ interrupt void SCID_TX_ISR(void)
 //
 interrupt void SCIA_RX_ISR(void)
 {
-    //
-    // Insert ISR Code here
-    //
+    SCI_ReadFIFO();
+    SciaRegs.SCIFFRX.bit.RXFIFORESET = 0;
+    SciaRegs.SCIFFRX.bit.RXFIFORESET = 1;
+    SciaRegs.SCIFFRX.bit.RXFFOVRCLR = 1;        // Clear Overflow flag
+    SciaRegs.SCIFFRX.bit.RXFFINTCLR = 1;        // Clear Interrupt flag
 
-    //
-    // To receive more interrupts from this PIE group,
-    // acknowledge this interrupt.
-    // PieCtrlRegs.PIEACK.all = PIEACK_GROUP9;
-    //
-
-    //
-    // Next two lines for debug only to halt the processor here
-    // Remove after inserting ISR Code
-    //
-    asm ("      ESTOP0");
-    for(;;);
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP9;
 }
 
 //
 // 9.2 - SCIA Transmit Interrupt
 //
+extern unsigned int SCIA_Txdate[8];
 interrupt void SCIA_TX_ISR(void)
 {
-    //
-    // Insert ISR Code here
-    //
-
-    //
-    // To receive more interrupts from this PIE group,
-    // acknowledge this interrupt.
-    // PieCtrlRegs.PIEACK.all = PIEACK_GROUP9;
-    //
-
-    //
-    // Next two lines for debug only to halt the processor here
-    // Remove after inserting ISR Code
-    //
-    asm ("      ESTOP0");
-    for(;;);
+    Uint16 i;
+    for(i=0; i< 8; i++)
+    {
+        SciaRegs.SCITXBUF.all = SCIA_Txdate[i];  // Send data
+    }
+    PieCtrlRegs.PIEACK.all |= PIEACK_GROUP9;       // Issue PIE ACK
 }
 
 //

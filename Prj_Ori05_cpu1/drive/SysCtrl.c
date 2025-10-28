@@ -1,7 +1,7 @@
 /*
  * SysCtrl.c
  *
- *  Created on: 2022Äê8ÔÂ12ÈÕ
+ *  Created on: 2022ï¿½ï¿½8ï¿½ï¿½12ï¿½ï¿½
  *      Author: 110
  */
 
@@ -165,13 +165,13 @@ void InitPeripheralClocks(void)
 
     ClkCfgRegs.LOSPCP.bit.LSPCLKDIV = 0;           //  1/2
 
-    CpuSysRegs.PCLKCR0.bit.CLA1 = 1;
+//    CpuSysRegs.PCLKCR0.bit.CLA1 = 1;
     CpuSysRegs.PCLKCR0.bit.DMA = 1;
-    CpuSysRegs.PCLKCR7.bit.SCI_A = 1;
+//    CpuSysRegs.PCLKCR7.bit.SCI_A = 1;
 //    CpuSysRegs.PCLKCR7.bit.SCI_B = 1;
-    CpuSysRegs.PCLKCR7.bit.SCI_C = 1;
-    CpuSysRegs.PCLKCR11.bit.McBSP_B = 1;
-    CpuSysRegs.PCLKCR10.bit.CAN_A = 1;
+//    CpuSysRegs.PCLKCR7.bit.SCI_C = 1;
+//    CpuSysRegs.PCLKCR11.bit.McBSP_B = 1;
+//    CpuSysRegs.PCLKCR10.bit.CAN_A = 1;
     CpuSysRegs.PCLKCR0.bit.CPUTIMER0 = 1;
 //    CpuSysRegs.PCLKCR0.bit.CPUTIMER1 = 1;
 //    CpuSysRegs.PCLKCR0.bit.CPUTIMER2 = 1;

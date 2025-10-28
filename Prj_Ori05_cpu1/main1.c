@@ -172,17 +172,12 @@ void System_Init(void)
     // ===== 步骤1: 初始化系统控制 =====
     InitSysCtrl();
 
-    // ===== 步骤2: 启动CPU2 =====
-    #ifdef _FLASH
-//        IPCBootCPU2(C1C2_BROM_BOOTMODE_BOOT_FROM_FLASH);
-    #else
-        IPCBootCPU2(C1C2_BROM_BOOTMODE_BOOT_FROM_RAM);
-    #endif
-
-    // ===== 步骤3: 初始化GPIO =====
+    // ===== 步骤2: 初始化GPIO =====
     InitGpio();
 
-    // ===== 步骤4: 配置中断系统 =====
+    InitSciGpio();//为在CPU2运行的SCIA的GPIO初始化
+
+    // ===== 步骤3: 配置中断系统 =====
     DINT;  // 禁用CPU中断
 
     InitPieCtrl();  // 初始化PIE控制寄存器
@@ -199,11 +194,23 @@ void System_Init(void)
     // 注意：不再注册IPC中断
     EDIS;
 
-    // ===== 步骤5: 配置共享RAM权限 =====
-    // 静态分配GS0给CPU2（这是关键！）
+    // ===== 步骤4: 配置共享RAM和外设所有权 =====
+    // 静态分配GS0给CPU2，分配SCIA所有权给CPU2
     EALLOW;
     MemCfgRegs.GSxMSEL.bit.MSEL_GS0 = 1;  // GS0分配给CPU2
+    DevCfgRegs.CPUSEL5.bit.SCI_A = 1;//SCIA分配给CPU2
     EDIS;
+
+    // ===== 步骤5: 通知CPU2配置完成并启动CPU2 =====
+    // 通知CPU2：SCIA配置就绪（GPIO和所有权分配已完成）
+    IPCLtoRFlagSet(IPC_FLAG12);
+
+    // 启动CPU2（所有配置已完成，CPU2可以安全初始化）
+    #ifdef _FLASH
+//        IPCBootCPU2(C1C2_BROM_BOOTMODE_BOOT_FROM_FLASH);
+    #else
+        IPCBootCPU2(C1C2_BROM_BOOTMODE_BOOT_FROM_RAM);
+    #endif
 
     // ===== 步骤6: 配置外设 =====
     EALLOW;

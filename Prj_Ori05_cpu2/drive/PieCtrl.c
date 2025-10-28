@@ -85,10 +85,11 @@ void EnableInterrupts()
 
     // 使能CPU中断组
     IER |= M_INT1;   // PIE组1（TIMER0中断）
-
+    IER |= M_INT9;   //
     // 使能PIE中断
     PieCtrlRegs.PIEIER1.bit.INTx7 = 1;   // TIMER0 (PIE1.7)
-
+    PieCtrlRegs.PIEIER9.bit.INTx1 = 1;  // Enable all SCIA RXINT interrupt
+    PieCtrlRegs.PIEIER9.bit.INTx2 = 1;  // Enable all SCIA TXINT interrupt
     //
 //  PieCtrlRegs.PIEACK.all = 0xFFFF;
 
