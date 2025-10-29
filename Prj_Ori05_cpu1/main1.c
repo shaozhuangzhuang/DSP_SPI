@@ -15,6 +15,14 @@
 #include "F28x_Project.h"
 #include "F2837xD_Ipc_drivers.h"
 
+// SPI驱动头文件
+#include "Drivers/drv_spi.h"
+#include "Drivers/drv_dma.h"
+#include "Drivers/drv_ad5754.h"
+#include "Drivers/drv_ads1278.h"
+#include "Drivers/drv_watchdog.h"
+#include "Framework/system_config.h"
+
 // ===== 全局变量定义 =====
 // 共享RAM数组定义（减少到24个元素）
 uint16_t c1_r_array[24];       // CPU1只读，CPU2写入，映射到GS0（CPU2拥有）
@@ -29,6 +37,14 @@ uint16_t multiplier = 0;       // 乘数因子：0-255循环递增
 // 20ms周期控制标志
 volatile uint16_t flag_20ms_write = 0;  // 20ms写入标志
 
+// SPI任务控制标志（20kHz处理）
+volatile uint16_t flag_50us = 0;        // 50us任务标志（20kHz ADC数据处理）
+volatile uint16_t flag_100ms = 0;       // 100ms任务标志（DAC更新）
+
+// ADC数据缓存（方案B：仅保留最新数据）
+static volatile ADS1278_Data_t g_latestAdc;        // 最新ADC数据
+static volatile bool g_latestAdcValid = false;     // 数据有效标志
+
 // 定时器控制变量（保留原有业务逻辑）
 unsigned int IPC_Timer_1MS = 0;
 extern uint32_t SCIA_Counter;
@@ -40,6 +56,10 @@ interrupt void cpu_timer0_isr(void);
 // RAM_management方式的数据交换函数
 void Shared_Ram_dataWrite_c1(void);  // 向GS1写入数据
 void Shared_Ram_dataRead_c1(void);   // 从GS0读取并验证数据
+
+// SPI任务函数
+void SPI_Task_50us(void);   // 50us任务：读取ADC数据（20kHz）
+void SPI_Task_100ms(void);  // 100ms任务：更新DAC输出
 
 //****************************************************************************
 // 函数名: main
@@ -58,7 +78,14 @@ void main(void)
     // ===== 主循环 =====
     while(1)
     {
-        // 处理20ms周期写入任务
+        // ===== 50us任务（20kHz ADC数据处理） =====
+        if(flag_50us)
+        {
+            flag_50us = 0;
+            SPI_Task_50us();  // 读取最新ADC数据
+        }
+        
+        // ===== 20ms任务（IPC通信 + 喂狗） =====
         if(flag_20ms_write)
         {
             flag_20ms_write = 0;  // 清除标志
@@ -74,9 +101,19 @@ void main(void)
             
             // 设置FLAG10，通知CPU2数据已准备好
             IPCLtoRFlagSet(IPC_FLAG10);
+            
+            // 喂狗（新增）
+            Drv_Watchdog_Kick();
         }
         
-        // 检查CPU2是否发送了新数据（FLAG11置位）
+        // ===== 100ms任务（DAC更新） =====
+        if(flag_100ms)
+        {
+            flag_100ms = 0;
+            SPI_Task_100ms();  // 更新DAC输出
+        }
+        
+        // ===== 原有IPC读取任务（保持不变） =====
         if(IPCRtoLFlagBusy(IPC_FLAG11) == 1)
         {
             // 读取CPU2写入的GS0数据并验证
@@ -85,9 +122,6 @@ void main(void)
             // ACK清除FLAG11
             IPCRtoLFlagAcknowledge(IPC_FLAG11);
         }
-
-        // 原有业务逻辑可以在这里处理
-        // 例如：其他任务、状态机等
     }
 }
 
@@ -140,22 +174,34 @@ void Shared_Ram_dataRead_c1(void)
 //****************************************************************************
 // 函数名: cpu_timer0_isr
 // 功能: CPU定时器0中断服务程序
-// 说明: 250us定时中断，通过计数器实现20ms周期标志设置
+// 说明: 50us定时中断（修改为20kHz），实现多级任务周期标志
 //****************************************************************************
 interrupt void cpu_timer0_isr(void)
 {
-    static uint16_t timer_counter = 0;  // 20ms周期计数器
+    static uint16_t counter_50us = 0;    // 50us计数器（用于20ms和100ms标志）
+    static uint16_t counter_250us = 0;   // 250us计数器（用于IPC_Timer_1MS兼容）
     
-    IPC_Timer_1MS++;
+    counter_50us++;
+    counter_250us++;
     
-    // 计数器递增，实现20ms周期 (250us * 80 = 20ms)
-    timer_counter++;
-    if(timer_counter >= 80)
-    {
-        timer_counter = 0;
-        
-        // 设置20ms写入标志，由主循环处理
+    // 保持IPC_Timer_1MS的原有时基（每250us增加1）
+    if(counter_250us >= 5) {  // 5 * 50us = 250us
+        IPC_Timer_1MS++;
+        counter_250us = 0;
+    }
+    
+    // ===== 50us任务标志（20kHz ADC数据处理） =====
+    flag_50us = 1;
+    
+    // ===== 20ms任务标志（IPC通信 + 喂狗） =====
+    if(counter_50us % 400 == 0) {  // 每400次触发（20ms）
         flag_20ms_write = 1;
+    }
+    
+    // ===== 100ms任务标志（DAC更新） =====
+    if(counter_50us >= 2000) {  // 2000 * 50us = 100ms
+        flag_100ms = 1;
+        counter_50us = 0;  // 重置计数器
     }
 
     // 应答PIE组1中断
@@ -191,7 +237,11 @@ void System_Init(void)
     // 注册中断向量
     EALLOW;
     PieVectTable.TIMER0_INT = &cpu_timer0_isr;
-    // 注意：不再注册IPC中断
+    PieVectTable.XINT2_INT = &ADS1278_DRDY_ISR;      // XINT2：ADS1278 DRDY信号
+    PieVectTable.DMA_CH1_INT = &DMA_CH1_ISR;         // DMA CH1：SPIA RX
+    PieVectTable.DMA_CH2_INT = &DMA_CH2_ISR;         // DMA CH2：SPIA TX
+    PieVectTable.DMA_CH5_INT = &DMA_CH5_ISR;         // DMA CH5：SPIB TX
+
     EDIS;
 
     // ===== 步骤4: 配置共享RAM和外设所有权 =====
@@ -217,11 +267,32 @@ void System_Init(void)
     CpuSysRegs.SECMSEL.bit.PF2SEL = 1;  // 将第二外设帧连接到DMA
     EDIS;
 
+    // ===== 步骤6.5: SPI/DMA驱动初始化（新增） =====
+    Drv_SPI_GPIO_Config();          // SPI GPIO配置（SPIA/SPIB引脚）
+    Drv_SPIA_Init();                // SPIA初始化（ADS1278专用）
+    Drv_SPIB_Init();                // SPIB初始化（AD5754专用）
+    Drv_DMA_Init();                 // DMA初始化（CH1/2:SPIA, CH5/6:SPIB）
+    Drv_ADS1278_InitDefault();      // ADS1278 ADC初始化
+    Drv_AD5754_InitDefault();       // AD5754 DAC初始化
+    
+    // 注册DMA回调
+    Drv_DMA_RegisterCallback(DMA_CH1, (DMA_Callback_t)Drv_ADS1278_GetDMACallback());
+
     // ===== 步骤7: 初始化并启动定时器 =====
     InitCpuTimers();
-    ConfigCpuTimer(&CpuTimer0, 200, 250);  // 200MHz, 250us周期
-    CpuTimer0Regs.TCR.all = 0x4000;        // 启动定时器
+    ConfigCpuTimer(&CpuTimer0, 200, 50);  // 200MHz, 50us周期（修改为20kHz）
+    CpuTimer0Regs.TCR.all = 0x4000;       // 启动定时器
 
+    // ===== 步骤8: 使能中断（新增DMA和XINT2中断） =====
+    IER |= M_INT1;  // 使能INT1组（Timer0 + XINT2）
+    IER |= M_INT7;  // 使能INT7组（DMA中断）
+    
+    // 使能PIE中断
+    PieCtrlRegs.PIEIER1.bit.INTx7 = 1;  // Timer0
+    PieCtrlRegs.PIEIER1.bit.INTx5 = 1;  // XINT2
+    PieCtrlRegs.PIEIER7.bit.INTx1 = 1;  // DMA CH1
+    PieCtrlRegs.PIEIER7.bit.INTx2 = 1;  // DMA CH2
+    PieCtrlRegs.PIEIER7.bit.INTx5 = 1;  // DMA CH5
 
     EnableInterrupts();
 
@@ -229,6 +300,60 @@ void System_Init(void)
     // 等待CPU2发送就绪标志
     while(!IPCRtoLFlagBusy(IPC_FLAG17));
     IPCRtoLFlagAcknowledge(IPC_FLAG17);
+
+    // ===== 步骤10: 看门狗初始化（新增，最后启动） =====
+    Drv_Watchdog_Init();  // 检测复位原因并配置看门狗
+}
+
+//****************************************************************************
+// 函数名: SPI_Task_50us
+// 功能: 50us任务 - 读取ADC数据（20kHz处理速率）
+// 说明: 从Ping-Pong缓冲区读取最新ADC数据并更新到全局变量
+//****************************************************************************
+void SPI_Task_50us(void)
+{
+    ADS1278_Data_t adc_data;
+    
+    // 从Ping-Pong缓冲区读取最新ADC数据（非阻塞）
+    if(Drv_ADS1278_GetData(&adc_data))
+    {
+        // 更新最新数据到全局变量
+        g_latestAdc = adc_data;
+        g_latestAdcValid = true;
+        
+        // 可选：简单的阈值检测（保持任务简短）
+        // if(adc_data.ch[0] > 0x7FFFFF) {
+        //     // 处理超限情况
+        // }
+    }
+}
+
+//****************************************************************************
+// 函数名: SPI_Task_100ms
+// 功能: 100ms任务 - 更新DAC输出
+// 说明: 读取最新ADC数据并根据需要更新DAC输出
+//****************************************************************************
+void SPI_Task_100ms(void)
+{
+    if(g_latestAdcValid)
+    {
+        // 快速拷贝最新数据
+        ADS1278_Data_t adc_data = g_latestAdc;
+        g_latestAdcValid = false;
+        
+        // 生成DAC输出数据（示例：固定值）
+        uint16_t dac_values[4];
+        dac_values[0] = 0x8000;  // 通道A: 0V（中点）
+        dac_values[1] = 0xC000;  // 通道B: +5V
+        dac_values[2] = 0x4000;  // 通道C: -5V
+        dac_values[3] = 0x8000;  // 通道D: 0V（中点）
+        
+        // TODO: 可根据adc_data进行计算，生成实际需要的DAC值
+        // 例如：闭环控制、波形生成等
+        
+        // 写入DAC（非阻塞）
+        Drv_AD5754_WriteAllChannels(dac_values);
+    }
 }
 
 //

@@ -133,6 +133,9 @@ SECTIONS
    Filter3_RegsFile : > RAMGS3,	PAGE = 1, fill=0x3333
    Filter4_RegsFile : > RAMGS4,	PAGE = 1, fill=0x4444
    Difference_RegsFile : >RAMGS5, 	PAGE = 1, fill=0x3333
+
+   /* DMA buffers for SPI operations (ADS1278/AD5754) */
+   .dma_buffers    : > RAMGS6,     PAGE = 1, ALIGN(4)
 }
 
 /*

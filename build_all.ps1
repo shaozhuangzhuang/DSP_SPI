@@ -1,9 +1,9 @@
 # ============================================================================
 # F28377D Dual-Core DSP Build Script
 # ============================================================================
-# Function: Auto build Prj_Ori04 dual-core projects (CPU1 and CPU2)
+# Function: Auto build Prj_Ori05 dual-core projects (CPU1 and CPU2)
 # Author: Auto-generated
-# Date: 2025-10-27
+# Date: 2025-10-29
 # ============================================================================
 
 param(
@@ -23,14 +23,14 @@ $GMAKE_PATH = "$CCS_ROOT\utils\bin\gmake.exe"
 # Project root directory
 $PROJECT_ROOT = $PSScriptRoot
 
-# Project configuration - Prj_Ori04
-$CPU1_PROJECT = "$PROJECT_ROOT\Prj_Ori04_cpu1"
+# Project configuration - Prj_Ori05
+$CPU1_PROJECT = "$PROJECT_ROOT\Prj_Ori05_cpu1"
 $CPU1_BUILD_DIR = "$CPU1_PROJECT\CPU1_FLASH_STANDALONE"
-$CPU1_OUTPUT = "$CPU1_BUILD_DIR\Prj_Ori04_cpu1.out"
+$CPU1_OUTPUT = "$CPU1_BUILD_DIR\Prj_Ori05_cpu1.out"
 
-$CPU2_PROJECT = "$PROJECT_ROOT\Prj_Ori04_cpu2"
+$CPU2_PROJECT = "$PROJECT_ROOT\Prj_Ori05_cpu2"
 $CPU2_BUILD_DIR = "$CPU2_PROJECT\CPU2_FLASH"
-$CPU2_OUTPUT = "$CPU2_BUILD_DIR\Prj_Ori04_cpu2.out"
+$CPU2_OUTPUT = "$CPU2_BUILD_DIR\Prj_Ori05_cpu2.out"
 
 # ============================================================================
 # Helper Functions
@@ -72,16 +72,16 @@ function Check-Prerequisites {
     
     # Check if project directories exist
     if (-Not (Test-Path $CPU1_BUILD_DIR)) {
-        Print-Error "Cannot find Prj_Ori04_cpu1 build directory: $CPU1_BUILD_DIR"
+        Print-Error "Cannot find Prj_Ori05_cpu1 build directory: $CPU1_BUILD_DIR"
         exit 1
     }
-    Print-Success "Found Prj_Ori04_cpu1 build directory"
+    Print-Success "Found Prj_Ori05_cpu1 build directory"
     
     if (-Not (Test-Path $CPU2_BUILD_DIR)) {
-        Print-Error "Cannot find Prj_Ori04_cpu2 build directory: $CPU2_BUILD_DIR"
+        Print-Error "Cannot find Prj_Ori05_cpu2 build directory: $CPU2_BUILD_DIR"
         exit 1
     }
-    Print-Success "Found Prj_Ori04_cpu2 build directory"
+    Print-Success "Found Prj_Ori05_cpu2 build directory"
     
     Write-Host ""
 }
@@ -188,8 +188,8 @@ $total_count = 2
 switch ($Action.ToLower()) {
     "clean" {
         # Clean only
-        if (Clean-Project "Prj_Ori04_cpu1" $CPU1_BUILD_DIR) { $success_count++ }
-        if (Clean-Project "Prj_Ori04_cpu2" $CPU2_BUILD_DIR) { $success_count++ }
+        if (Clean-Project "Prj_Ori05_cpu1" $CPU1_BUILD_DIR) { $success_count++ }
+        if (Clean-Project "Prj_Ori05_cpu2" $CPU2_BUILD_DIR) { $success_count++ }
     }
     
     "rebuild" {
@@ -197,14 +197,14 @@ switch ($Action.ToLower()) {
         Print-Info "Full rebuild (clean + build)"
         Write-Host ""
         
-        if (Clean-Project "Prj_Ori04_cpu1" $CPU1_BUILD_DIR) {
-            if (Build-Project "Prj_Ori04_cpu1" $CPU1_BUILD_DIR $CPU1_OUTPUT) {
+        if (Clean-Project "Prj_Ori05_cpu1" $CPU1_BUILD_DIR) {
+            if (Build-Project "Prj_Ori05_cpu1" $CPU1_BUILD_DIR $CPU1_OUTPUT) {
                 $success_count++
             }
         }
         
-        if (Clean-Project "Prj_Ori04_cpu2" $CPU2_BUILD_DIR) {
-            if (Build-Project "Prj_Ori04_cpu2" $CPU2_BUILD_DIR $CPU2_OUTPUT) {
+        if (Clean-Project "Prj_Ori05_cpu2" $CPU2_BUILD_DIR) {
+            if (Build-Project "Prj_Ori05_cpu2" $CPU2_BUILD_DIR $CPU2_OUTPUT) {
                 $success_count++
             }
         }
@@ -212,11 +212,11 @@ switch ($Action.ToLower()) {
     
     "build" {
         # Incremental build
-        if (Build-Project "Prj_Ori04_cpu1" $CPU1_BUILD_DIR $CPU1_OUTPUT) {
+        if (Build-Project "Prj_Ori05_cpu1" $CPU1_BUILD_DIR $CPU1_OUTPUT) {
             $success_count++
         }
         
-        if (Build-Project "Prj_Ori04_cpu2" $CPU2_BUILD_DIR $CPU2_OUTPUT) {
+        if (Build-Project "Prj_Ori05_cpu2" $CPU2_BUILD_DIR $CPU2_OUTPUT) {
             $success_count++
         }
     }
@@ -246,10 +246,10 @@ if ($success_count -eq $total_count) {
     Write-Host ""
     Print-Info "Output files:"
     if (Test-Path $CPU1_OUTPUT) {
-        Write-Host "  - Prj_Ori04_cpu1: $CPU1_OUTPUT"
+        Write-Host "  - Prj_Ori05_cpu1: $CPU1_OUTPUT"
     }
     if (Test-Path $CPU2_OUTPUT) {
-        Write-Host "  - Prj_Ori04_cpu2: $CPU2_OUTPUT"
+        Write-Host "  - Prj_Ori05_cpu2: $CPU2_OUTPUT"
     }
     
     exit 0
@@ -267,8 +267,8 @@ if ($success_count -eq $total_count) {
     F28377D Dual-Core DSP Build Script
 
 .DESCRIPTION
-    Auto build Prj_Ori04 dual-core projects (CPU1 and CPU2)
-    Projects: Prj_Ori04_cpu1, Prj_Ori04_cpu2
+    Auto build Prj_Ori05 dual-core projects (CPU1 and CPU2)
+    Projects: Prj_Ori05_cpu1, Prj_Ori05_cpu2
     Support incremental build, clean, rebuild, parallel build
 
 .PARAMETER Action
@@ -304,7 +304,7 @@ if ($success_count -eq $total_count) {
 .NOTES
     File: build_all.ps1
     Author: Auto-generated
-    Date: 2025-10-27
+    Date: 2025-10-29
     
     Notes:
     1. Modify $CCS_ROOT to your CCS installation path before first run
