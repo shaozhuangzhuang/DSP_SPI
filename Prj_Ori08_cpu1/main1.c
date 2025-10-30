@@ -15,11 +15,8 @@
 #include "F28x_Project.h"
 #include "F2837xD_Ipc_drivers.h"
 
-// SPI驱动头文件
-#include "Drivers/drv_spi.h"
-#include "Drivers/drv_dma.h"
-#include "Drivers/drv_ad5754.h"
-#include "Drivers/drv_ads1278.h"
+
+
 #include "Drivers/drv_watchdog.h"
 #include "Framework/system_config.h"
 #include "Framework/global_data.h"
@@ -39,12 +36,9 @@ uint16_t multiplier = 0;       // 乘数因子：0-255循环递增
 volatile uint16_t flag_20ms_write = 0;  // 20ms写入标志
 
 // SPI任务控制标志（20kHz处理）
-volatile uint16_t flag_50us = 0;        // 50us任务标志（20kHz ADC数据处理）
-volatile uint16_t flag_100ms = 0;       // 100ms任务标志（DAC更新）
 
-// ADC数据缓存（方案B：仅保留最新数据）
-static volatile ADS1278_Data_t g_latestAdc;        // 最新ADC数据
-static volatile bool g_latestAdcValid = false;     // 数据有效标志
+
+
 
 // 定时器控制变量（保留原有业务逻辑）
 unsigned int IPC_Timer_1MS = 0;
@@ -58,9 +52,7 @@ interrupt void cpu_timer0_isr(void);
 void Shared_Ram_dataWrite_c1(void);  // 向GS1写入数据
 void Shared_Ram_dataRead_c1(void);   // 从GS0读取并验证数据
 
-// SPI任务函数
-void SPI_Task_50us(void);   // 50us任务：读取ADC数据（20kHz）
-void SPI_Task_100ms(void);  // 100ms任务：更新DAC输出
+
 
 //****************************************************************************
 // 函数名: main
@@ -79,12 +71,7 @@ void main(void)
     // ===== 主循环 =====
     while(1)
     {
-        // ===== 50us任务（20kHz ADC数据处理） =====
-        if(flag_50us)
-        {
-            flag_50us = 0;
-            SPI_Task_50us();  // 读取最新ADC数据
-        }
+
         
         // ===== 20ms任务（IPC通信 + 喂狗） =====
         if(flag_20ms_write)
@@ -107,12 +94,7 @@ void main(void)
              Drv_Watchdog_Kick(); //
         }
         
-        // ===== 100ms任务（DAC更新） =====
-        if(flag_100ms)
-        {
-            flag_100ms = 0;
-            SPI_Task_100ms();  // 更新DAC输出
-        }
+
         
         // ===== 原有IPC读取任务（保持不变） =====
         if(IPCRtoLFlagBusy(IPC_FLAG11) == 1)
@@ -179,30 +161,22 @@ void Shared_Ram_dataRead_c1(void)
 //****************************************************************************
 interrupt void cpu_timer0_isr(void)
 {
-    static uint16_t counter_50us = 0;    // 50us计数器（用于20ms和100ms标志）
+    static uint16_t counter_20ms = 0;
     static uint16_t counter_250us = 0;   // 250us计数器（用于IPC_Timer_1MS兼容）
-    
-    counter_50us++;
+
+    counter_20ms++;
     counter_250us++;
-    
+
     // 保持IPC_Timer_1MS的原有时基（每250us增加1）
     if(counter_250us >= 5) {  // 5 * 50us = 250us
         IPC_Timer_1MS++;
         counter_250us = 0;
     }
-    
-    // ===== 50us任务标志（20kHz ADC数据处理） =====
-    flag_50us = 1;
-    
+
     // ===== 20ms任务标志（IPC通信 + 喂狗） =====
-    if(counter_50us % 400 == 0) {  // 每400次触发（20ms）
+    if(counter_20ms >= 400) {  // 每400次触发（400 * 50us = 20ms）
         flag_20ms_write = 1;
-    }
-    
-    // ===== 100ms任务标志（DAC更新） =====
-    if(counter_50us >= 2000) {  // 2000 * 50us = 100ms
-        flag_100ms = 1;
-        counter_50us = 0;  // 重置计数器
+        counter_20ms = 0;
     }
 
     // 应答PIE组1中断
@@ -241,11 +215,7 @@ void System_Init(void)
     // 注册中断向量
     EALLOW;
     PieVectTable.TIMER0_INT = &cpu_timer0_isr;
-    PieVectTable.XINT2_INT = &ADS1278_DRDY_ISR;      // XINT2：ADS1278 DRDY信号
-    PieVectTable.DMA_CH1_INT = &DMA_CH1_ISR;         // DMA CH1：SPIA RX
-    PieVectTable.DMA_CH2_INT = &DMA_CH2_ISR;         // DMA CH2：SPIA TX
-    PieVectTable.DMA_CH5_INT = &DMA_CH5_ISR;         // DMA CH5：SPIB TX
-    PieVectTable.DMA_CH6_INT = &DMA_CH6_ISR;         // DMA CH6：SPIB RX
+
 
     EDIS;
 
@@ -267,18 +237,8 @@ void System_Init(void)
         IPCBootCPU2(C1C2_BROM_BOOTMODE_BOOT_FROM_RAM);
     #endif
 
-    // ===== 步骤6: 配置外设 =====
-    EALLOW;
-    CpuSysRegs.SECMSEL.bit.PF2SEL = 1;  // 将第二外设帧连接到DMA
-    EDIS;
 
-    // ===== 步骤6.5: SPI/DMA驱动初始化（新增） =====
-    Drv_SPI_GPIO_Config();          // SPI GPIO配置（SPIA/SPIB引脚）
-    Drv_SPIA_Init();                // SPIA初始化（ADS1278专用）
-    Drv_SPIB_Init();                // SPIB初始化（AD5754专用）
-    Drv_DMA_Init();                 // DMA初始化（CH1/2:SPIA, CH5/6:SPIB）
-    Drv_ADS1278_InitDefault();      // ADS1278 ADC初始化
-    Drv_AD5754_InitDefault();       // AD5754 DAC初始化
+
     
     // ===== 步骤7: 初始化并启动定时器 =====
     InitCpuTimers();
@@ -299,100 +259,10 @@ void System_Init(void)
     // ===== 步骤11: 看门狗初始化（新增，最后启动） =====
 //    Drv_Watchdog_Init();  // 检测复位原因并配置看门狗
     
-    // ===== 步骤12: AD5754通信测试 =====
-    if(!Drv_AD5754_TestCommunication()) {
-        // 测试失败，查看g_ad5754_test_xxx变量诊断
-        while(1);
-    }
+
 }
 
-//****************************************************************************
-// 函数名: SPI_Task_50us
-// 功能: 50us任务 - 读取ADC数据（20kHz处理速率）
-// 说明: 检测DMA完成标志，处理接收到的ADC数据
-//****************************************************************************
-void SPI_Task_50us(void)
-{
-    ADS1278_Data_t adc_data;
-    
-    // 方式1: 使用Drv_ADS1278_GetData（已在DRDY中断/DMA回调中处理并缓存）
-    if(Drv_ADS1278_GetData(&adc_data))
-    {
-        // 更新旧的全局变量（保留兼容性）
-        g_latestAdc = adc_data;
-        g_latestAdcValid = true;
-        
-        // 更新到新的全局数据结构（使用24位ADC转换，参考电压2.5V）
-        GlobalData_UpdateADC(adc_data.ch, 2.5f);
-    }
-    
-    /* 方式2（可选）: 直接检测DMA标志并处理数据
-    // 如果需要更快的响应，可以直接在这里检测DMA完成标志
-    extern volatile bool g_dma_ch1_done;
-    extern volatile bool g_dma_ch2_done;
-    extern volatile bool g_ads1278_ping_active;
-    
-    if(g_dma_ch1_done && g_dma_ch2_done)
-    {
-        // 清除标志
-        g_dma_ch1_done = false;
-        g_dma_ch2_done = false;
-        
-        // 获取当前活动缓冲区
-        Uint16 *src_buffer = g_ads1278_ping_active ? 
-                             Drv_DMA_GetAdcPingBuffer() : 
-                             Drv_DMA_GetAdcPongBuffer();
-        
-        // 转换数据
-        Drv_ADS1278_ConvertData(src_buffer, &adc_data);
-        
-        // 切换Ping-Pong缓冲区
-        g_ads1278_ping_active = !g_ads1278_ping_active;
-        
-        // 更新全局数据
-        g_latestAdc = adc_data;
-        g_latestAdcValid = true;
-        GlobalData_UpdateADC(adc_data.ch, 2.5f);
-    }
-    */
-}
 
-//****************************************************************************
-// 函数名: SPI_Task_100ms
-// 功能: 100ms任务 - 更新DAC输出
-// 说明: 从全局数据结构读取DAC设定值并输出到硬件
-//****************************************************************************
-void SPI_Task_100ms(void)
-{
-    Uint16 i;
-    Uint16 dac_values[4];
-    
-    // 检查ADC数据是否有效
-    if(GlobalData_IsADCValid())
-    {
-        // TODO: 根据ADC数据计算DAC输出值（例如：闭环控制、波形生成）
-        // 示例：直接使用当前设定值（默认为0V，可通过GlobalData_SetDACVoltage修改）
-        
-        // 从全局结构读取DAC电压设定值，转换为DAC码值
-        for(i = 0; i < 4; i++)
-        {
-            float voltage;
-            if(GlobalData_GetDACVoltage(i, &voltage))
-            {
-                // 将电压转换为DAC码值（使用驱动层函数，默认±10V范围）
-                dac_values[i] = Drv_AD5754_VoltageToDacCode(voltage, AD5754_RANGE_NEG_10_10V);
-            }
-            else
-            {
-                // 如果读取失败，使用0V安全值
-                dac_values[i] = 0x8000;  // 0V（中点）
-            }
-        }
-        
-        // 写入DAC硬件（非阻塞）
-        Drv_AD5754_WriteAllChannels(dac_values);
-    }
-}
 
 //
 // End of file

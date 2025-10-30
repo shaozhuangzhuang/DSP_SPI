@@ -108,12 +108,12 @@ const struct PIE_VECT_TABLE PieVectTableInit = {
     MCBSPA_TX_ISR,                // 6.6 - McBSPA Transmit Interrupt
     MCBSPB_RX_ISR,                // 6.7 - McBSPB Receive Interrupt
     MCBSPB_TX_ISR,                // 6.8 - McBSPB Transmit Interrupt
-    DMA_CH1_ISR,                  // 7.1 - DMA Channel 1 Interrupt
-    DMA_CH2_ISR,                  // 7.2 - DMA Channel 2 Interrupt
+    PIE_RESERVED_ISR,             // 7.1 - DMA Channel 1 Interrupt
+    PIE_RESERVED_ISR,             // 7.2 - DMA Channel 2 Interrupt
     DMA_CH3_ISR,                  // 7.3 - DMA Channel 3 Interrupt
     DMA_CH4_ISR,                  // 7.4 - DMA Channel 4 Interrupt
-    DMA_CH5_ISR,                  // 7.5 - DMA Channel 5 Interrupt
-    DMA_CH6_ISR,                  // 7.6 - DMA Channel 6 Interrupt
+    PIE_RESERVED_ISR,             // 7.5 - DMA Channel 5 Interrupt
+    PIE_RESERVED_ISR,             // 7.6 - DMA Channel 6 Interrupt
     PIE_RESERVED_ISR,             // 7.7 - Reserved
     PIE_RESERVED_ISR,             // 7.8 - Reserved
     I2CA_ISR,                     // 8.1 - I2CA Interrupt 1
