@@ -47,7 +47,7 @@ static volatile bool g_latestAdcValid = false;     // 数据有效标志
 
 // 定时器控制变量（保留原有业务逻辑）
 unsigned int IPC_Timer_1MS = 0;
-extern uint32_t SCIA_Counter;
+// extern uint32_t SCIA_Counter;  // 未使用，已删除
 
 // ===== 函数原型声明 =====
 void System_Init(void);
@@ -221,7 +221,10 @@ void System_Init(void)
     // ===== 步骤2: 初始化GPIO =====
     InitGpio();
 
-    InitSciGpio();//为在CPU2运行的SCIA的GPIO初始化
+    EALLOW;
+    GPIO_SetupPinMux(135, GPIO_MUX_CPU2, 0);
+    GPIO_SetupPinMux(136, GPIO_MUX_CPU2, 0);
+    EDIS;
 
     // ===== 步骤3: 配置中断系统 =====
     DINT;  // 禁用CPU中断
@@ -250,7 +253,7 @@ void System_Init(void)
     MemCfgRegs.GSxMSEL.bit.MSEL_GS0 = 1;  // GS0分配给CPU2
     DevCfgRegs.CPUSEL5.bit.SCI_A = 1;//SCIA分配给CPU2
     EDIS;
-
+    InitSciGpio();//为在CPU2运行的SCIA的GPIO初始化
     // ===== 步骤5: 通知CPU2配置完成并启动CPU2 =====
     // 通知CPU2：SCIA配置就绪（GPIO和所有权分配已完成）
     IPCLtoRFlagSet(IPC_FLAG12);
@@ -294,6 +297,7 @@ void System_Init(void)
     PieCtrlRegs.PIEIER7.bit.INTx2 = 1;  // DMA CH2
     PieCtrlRegs.PIEIER7.bit.INTx5 = 1;  // DMA CH5
 
+    // ===== 步骤7: 初始化SCIA =====
     EnableInterrupts();
 
     // ===== 步骤9: 等待CPU2就绪 =====

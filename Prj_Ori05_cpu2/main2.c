@@ -65,8 +65,8 @@ void main(void)
                 SciaRegs.SCICTL1.bit.SWRESET = 1;
             }
             // 清串口发送中断标志
-            SciaRegs.SCIFFTX.bit.TXFIFORESET = 1;
-            SciaRegs.SCIFFTX.bit.TXFFINTCLR = 1;                    // Clear SCI Interrupt Flag 清串口发送中断标志，发送
+//            SciaRegs.SCIFFTX.bit.TXFIFORESET = 1;
+//            SciaRegs.SCIFFTX.bit.TXFFINTCLR = 1;                    // Clear SCI Interrupt Flag 清串口发送中断标志，发送
         }
 
         // 处理20ms周期写入任务
@@ -134,6 +134,7 @@ void Shared_Ram_dataRead_c2(void)
 
     // 从数组第一个元素读取乘数因子
     multiplier = c2_r_array[0];
+    (void)multiplier;  // 消除未使用警告（预留给将来的处理逻辑）
 
     // 这里可以添加数据处理逻辑
     // 例如：验证数据、执行计算、更新状态等
@@ -167,13 +168,7 @@ void System_Init(void)
 
     InitPieVectTable();  // 初始化PIE向量表
 
-    // 注册中断向量
-    EALLOW;
-    PieVectTable.TIMER0_INT = &TIMER0_ISR;
-    PieVectTable.SCIA_TX_INT = &SCIA_TX_ISR;
-    PieVectTable.SCIA_RX_INT = &SCIA_RX_ISR;
 
-    EDIS;
 
     // ===== 步骤3: 等待共享RAM可用 =====
     // 等待CPU1分配GS0内存给CPU2
@@ -184,18 +179,28 @@ void System_Init(void)
     while(!IPCRtoLFlagBusy(IPC_FLAG12));
     IPCRtoLFlagAcknowledge(IPC_FLAG12);
 
+    // 注册中断向量
+      EALLOW;
+      PieVectTable.TIMER0_INT = &TIMER0_ISR;
+      PieVectTable.SCIA_TX_INT = &SCIA_TX_ISR;
+      PieVectTable.SCIA_RX_INT = &SCIA_RX_ISR;
+
+      EDIS;
+
     // ===== 步骤5: 初始化并启动定时器 =====
     InitCpuTimers();
     ConfigCpuTimer(&CpuTimer0, 200, 50);  // 200MHz, 50us周期
     CpuTimer0Regs.TCR.all = 0x4000;       // 启动定时器
 
+    // ===== 步骤7: 初始化SCIA =====
+    // CPU1配置完成，现在可以安全配置SCIA寄存器
+    InitSci();
+
     // ===== 步骤6: 使能中断 =====
     // TIMER0中断使能已在 EnableInterrupts() 中配置
     EnableInterrupts();
 
-    // ===== 步骤7: 初始化SCIA =====
-    // CPU1配置完成，现在可以安全配置SCIA寄存器
-    InitSci();
+
 
     // ===== 步骤8: 通知CPU1已就绪 =====
     IPCLtoRFlagSet(IPC_FLAG17);

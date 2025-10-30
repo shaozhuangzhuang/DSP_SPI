@@ -90,3 +90,12 @@ void Drv_Watchdog_Service(void)
     EDIS;
 }
 
+/**
+ * @brief  看门狗喂狗 (Kick别名)
+ * @note   为兼容main1.c中的调用提供别名函数
+ */
+void Drv_Watchdog_Kick(void)
+{
+    Drv_Watchdog_Service();
+}
+
