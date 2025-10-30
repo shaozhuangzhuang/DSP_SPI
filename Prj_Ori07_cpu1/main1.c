@@ -22,6 +22,7 @@
 #include "Drivers/drv_ads1278.h"
 #include "Drivers/drv_watchdog.h"
 #include "Framework/system_config.h"
+#include "Framework/global_data.h"
 
 // ===== 全局变量定义 =====
 // 共享RAM数组定义（减少到24个元素）
@@ -103,7 +104,7 @@ void main(void)
             IPCLtoRFlagSet(IPC_FLAG10);
             
             // 喂狗（新增）
-             Drv_Watchdog_Kick(); // <-- 【测试】在此处注释掉喂狗，以验证看门狗复位功能
+             Drv_Watchdog_Kick(); //
         }
         
         // ===== 100ms任务（DAC更新） =====
@@ -305,14 +306,17 @@ void System_Init(void)
     while(!IPCRtoLFlagBusy(IPC_FLAG17));
     IPCRtoLFlagAcknowledge(IPC_FLAG17);
 
-    // ===== 步骤10: 看门狗初始化（新增，最后启动） =====
+    // ===== 步骤10: 全局数据结构初始化（新增） =====
+    GlobalData_Init();  // 初始化全局数据结构（ADC/DAC数据）
+    
+    // ===== 步骤11: 看门狗初始化（新增，最后启动） =====
     Drv_Watchdog_Init();  // 检测复位原因并配置看门狗
 }
 
 //****************************************************************************
 // 函数名: SPI_Task_50us
 // 功能: 50us任务 - 读取ADC数据（20kHz处理速率）
-// 说明: 从Ping-Pong缓冲区读取最新ADC数据并更新到全局变量
+// 说明: 从Ping-Pong缓冲区读取最新ADC数据并更新到全局数据结构
 //****************************************************************************
 void SPI_Task_50us(void)
 {
@@ -321,9 +325,12 @@ void SPI_Task_50us(void)
     // 从Ping-Pong缓冲区读取最新ADC数据（非阻塞）
     if(Drv_ADS1278_GetData(&adc_data))
     {
-        // 更新最新数据到全局变量
+        // 更新旧的全局变量（保留兼容性）
         g_latestAdc = adc_data;
         g_latestAdcValid = true;
+        
+        // 更新到新的全局数据结构（使用24位ADC转换，参考电压2.5V）
+        GlobalData_UpdateADC(adc_data.ch, 2.5f);
         
         // 可选：简单的阈值检测（保持任务简短）
         // if(adc_data.ch[0] > 0x7FFFFF) {
@@ -335,27 +342,36 @@ void SPI_Task_50us(void)
 //****************************************************************************
 // 函数名: SPI_Task_100ms
 // 功能: 100ms任务 - 更新DAC输出
-// 说明: 读取最新ADC数据并根据需要更新DAC输出
+// 说明: 从全局数据结构读取DAC设定值并输出到硬件
 //****************************************************************************
 void SPI_Task_100ms(void)
 {
-    if(g_latestAdcValid)
+    Uint16 i;
+    Uint16 dac_values[4];
+    
+    // 检查ADC数据是否有效
+    if(GlobalData_IsADCValid())
     {
-        // 快速拷贝最新数据
-        ADS1278_Data_t adc_data = g_latestAdc;
-        g_latestAdcValid = false;
+        // TODO: 根据ADC数据计算DAC输出值（例如：闭环控制、波形生成）
+        // 示例：直接使用当前设定值（默认为0V，可通过GlobalData_SetDACVoltage修改）
         
-        // 生成DAC输出数据（示例：固定值）
-        uint16_t dac_values[4];
-        dac_values[0] = 0x8000;  // 通道A: 0V（中点）
-        dac_values[1] = 0xC000;  // 通道B: +5V
-        dac_values[2] = 0x4000;  // 通道C: -5V
-        dac_values[3] = 0x8000;  // 通道D: 0V（中点）
+        // 从全局结构读取DAC电压设定值，转换为DAC码值
+        for(i = 0; i < 4; i++)
+        {
+            float voltage;
+            if(GlobalData_GetDACVoltage(i, &voltage))
+            {
+                // 将电压转换为DAC码值（使用驱动层函数，默认±10V范围）
+                dac_values[i] = Drv_AD5754_VoltageToDacCode(voltage, AD5754_RANGE_NEG_10_10V);
+            }
+            else
+            {
+                // 如果读取失败，使用0V安全值
+                dac_values[i] = 0x8000;  // 0V（中点）
+            }
+        }
         
-        // TODO: 可根据adc_data进行计算，生成实际需要的DAC值
-        // 例如：闭环控制、波形生成等
-        
-        // 写入DAC（非阻塞）
+        // 写入DAC硬件（非阻塞）
         Drv_AD5754_WriteAllChannels(dac_values);
     }
 }

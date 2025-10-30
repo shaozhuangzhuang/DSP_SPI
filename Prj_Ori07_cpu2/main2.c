@@ -15,6 +15,7 @@
 #include "F28x_Project.h"
 #include "F2837xD_Ipc_drivers.h"
 #include "Sci.h"
+#include "Drivers/drv_watchdog.h"
 
 // ===== 全局变量定义 =====
 // 共享RAM数组定义（减少到24个元素）
@@ -79,6 +80,9 @@ void main(void)
             
             // 设置FLAG11，通知CPU1数据已准备好
             IPCLtoRFlagSet(IPC_FLAG11);
+            
+            // 喂狗（新增）
+            Drv_Watchdog_Kick();
         }
         
         // 检查是否收到CPU1的IPC标志10
@@ -202,7 +206,10 @@ void System_Init(void)
 
 
 
-    // ===== 步骤8: 通知CPU1已就绪 =====
+    // ===== 步骤8: 看门狗初始化（新增，最后启动） =====
+    Drv_Watchdog_Init();  // 检测复位原因并配置看门狗
+    
+    // ===== 步骤9: 通知CPU1已就绪 =====
     IPCLtoRFlagSet(IPC_FLAG17);
 }
 
