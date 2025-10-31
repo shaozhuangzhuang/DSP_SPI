@@ -20,6 +20,7 @@
 #include "Drivers/drv_watchdog.h"
 #include "Framework/system_config.h"
 #include "Framework/global_data.h"
+#include "Drivers/drv_spi.h"
 
 // ===== 全局变量定义 =====
 // 共享RAM数组定义（减少到24个元素）
@@ -52,6 +53,14 @@ interrupt void cpu_timer0_isr(void);
 void Shared_Ram_dataWrite_c1(void);  // 向GS1写入数据
 void Shared_Ram_dataRead_c1(void);   // 从GS0读取并验证数据
 
+//
+// SPI通信
+//
+volatile Uint16 spiARxBuffer[4];
+volatile Uint16 spiBRxBuffer[4];
+interrupt void spiARxISR(void);
+interrupt void spiBRxISR(void);   // 从GS0读取并验证数据
+
 
 
 //****************************************************************************
@@ -72,36 +81,36 @@ void main(void)
     while(1)
     {
 
-        
+
         // ===== 20ms任务（IPC通信 + 喂狗） =====
         if(flag_20ms_write)
         {
             flag_20ms_write = 0;  // 清除标志
-            
+
             // 更新乘数因子（循环0-255）
             if(multiplier++ > 255)
             {
                 multiplier = 0;
             }
-            
+
             // 写入GS1共享RAM
             Shared_Ram_dataWrite_c1();
-            
+
             // 设置FLAG10，通知CPU2数据已准备好
             IPCLtoRFlagSet(IPC_FLAG10);
-            
+
             // 喂狗（新增）
              Drv_Watchdog_Kick(); //
         }
-        
 
-        
+
+
         // ===== 原有IPC读取任务（保持不变） =====
         if(IPCRtoLFlagBusy(IPC_FLAG11) == 1)
         {
             // 读取CPU2写入的GS0数据并验证
             Shared_Ram_dataRead_c1();
-            
+
             // ACK清除FLAG11
             IPCRtoLFlagAcknowledge(IPC_FLAG11);
         }
@@ -163,9 +172,13 @@ interrupt void cpu_timer0_isr(void)
 {
     static uint16_t counter_20ms = 0;
     static uint16_t counter_250us = 0;   // 250us计数器（用于IPC_Timer_1MS兼容）
+    static uint16_t spi_task_counter = 0;
+    static uint16_t spia_frame_count = 0;
+    static uint16_t spib_frame_count = 0;
 
     counter_20ms++;
     counter_250us++;
+    spi_task_counter++;
 
     // 保持IPC_Timer_1MS的原有时基（每250us增加1）
     if(counter_250us >= 5) {  // 5 * 50us = 250us
@@ -177,6 +190,24 @@ interrupt void cpu_timer0_isr(void)
     if(counter_20ms >= 400) {  // 每400次触发（400 * 50us = 20ms）
         flag_20ms_write = 1;
         counter_20ms = 0;
+    }
+
+    // ===== SPI Tasks (10ms & 20ms) =====
+    if (spi_task_counter >= 200) // 10ms task
+    {
+        SpiaRegs.SPITXBUF = 0xEB90;
+        SpiaRegs.SPITXBUF = 0x0111;
+        SpiaRegs.SPITXBUF = spia_frame_count++;
+        SpiaRegs.SPITXBUF = 0xAA55;
+
+        if (spi_task_counter >= 400) // 20ms task
+        {
+            spi_task_counter = 0;
+            SpibRegs.SPITXBUF = 0xEB90;
+            SpibRegs.SPITXBUF = 0x0212;
+            SpibRegs.SPITXBUF = spib_frame_count++;
+            SpibRegs.SPITXBUF = 0xAA55;
+        }
     }
 
     // 应答PIE组1中断
@@ -195,6 +226,8 @@ void System_Init(void)
 
     // ===== 步骤2: 初始化GPIO =====
     InitGpio();
+    InitSpiGpios(); // 添加SPI GPIO初始化
+    InitSpiModules(); // 添加SPI模块初始化
 
     EALLOW;
     GPIO_SetupPinMux(135, GPIO_MUX_CPU2, 0);
@@ -213,10 +246,10 @@ void System_Init(void)
     InitPieVectTable();  // 初始化PIE向量表
 
     // 注册中断向量
+    InitSpiInterrupts(); // 添加SPI中断初始化(包含ISR注册和PIE使能)
+
     EALLOW;
     PieVectTable.TIMER0_INT = &cpu_timer0_isr;
-
-
     EDIS;
 
     // ===== 步骤4: 配置共享RAM和外设所有权 =====
@@ -239,13 +272,23 @@ void System_Init(void)
 
 
 
-    
+
+
+
+
+
+
+
+
+
+
     // ===== 步骤7: 初始化并启动定时器 =====
     InitCpuTimers();
     ConfigCpuTimer(&CpuTimer0, 200, 50);  // 200MHz, 50us周期（修改为20kHz）
     CpuTimer0Regs.TCR.all = 0x4000;       // 启动定时器
 
     // ===== 步骤8: 使能中断 =====
+    IER |= M_INT1 | M_INT6; // 使能CPU中断组1(Timer0)和6(SPI)
     EnableInterrupts();
 
     // ===== 步骤9: 等待CPU2就绪 =====
@@ -255,14 +298,50 @@ void System_Init(void)
 
     // ===== 步骤10: 全局数据结构初始化（新增） =====
     GlobalData_Init();  // 初始化全局数据结构（ADC/DAC数据）
-    
+
     // ===== 步骤11: 看门狗初始化（新增，最后启动） =====
 //    Drv_Watchdog_Init();  // 检测复位原因并配置看门狗
-    
+
 
 }
 
 
+
+//****************************************************************************
+// 函数名: spiARxISR
+// 功能: SPIA接收FIFO中断
+//****************************************************************************
+interrupt void spiARxISR(void)
+{
+    Uint16 i;
+    for(i=0; i<4; i++)
+    {
+        spiARxBuffer[i] = SpiaRegs.SPIRXBUF;
+    }
+
+    // 在这里添加数据处理逻辑
+
+    SpiaRegs.SPIFFRX.bit.RXFFINTCLR = 1;  // Clear Interrupt Flag
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP6; // Acknowledge PIE Group 6
+}
+
+//****************************************************************************
+// 函数名: spiBRxISR
+// 功能: SPIB接收FIFO中断
+//****************************************************************************
+interrupt void spiBRxISR(void)
+{
+    Uint16 i;
+    for(i=0; i<4; i++)
+    {
+        spiBRxBuffer[i] = SpibRegs.SPIRXBUF;
+    }
+
+    // 在这里添加数据处理逻辑
+
+    SpibRegs.SPIFFRX.bit.RXFFINTCLR = 1;  // Clear Interrupt Flag
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP6; // Acknowledge PIE Group 6
+}
 
 //
 // End of file
