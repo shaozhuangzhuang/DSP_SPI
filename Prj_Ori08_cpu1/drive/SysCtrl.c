@@ -163,7 +163,7 @@ void InitPeripheralClocks(void)
 {
     EALLOW;
 
-    ClkCfgRegs.LOSPCP.bit.LSPCLKDIV = 0;           //  1/2
+    ClkCfgRegs.LOSPCP.bit.LSPCLKDIV = 2;           // SYSCLK/4 (200MHz/4=50MHz)
 
 //    CpuSysRegs.PCLKCR0.bit.CLA1 = 1;
     CpuSysRegs.PCLKCR0.bit.DMA = 1;

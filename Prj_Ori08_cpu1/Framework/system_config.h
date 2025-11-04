@@ -13,7 +13,7 @@
  ******************************************************************************/
 #define CPU_FREQ_MHZ            200         // CPU频率：200MHz
 #define SYSCLK_HZ               200000000UL // 系统时钟：200MHz (10MHz * IMULT_20 / PLLCLK_BY_2)
-#define LSPCLK_HZ               50000000UL  // 低速外设时钟：50MHz (SYSCLK / 4, LSPCLKDIV=0)
+#define LSPCLK_HZ               50000000UL  // 低速外设时钟：50MHz (LSPCLKDIV=2, SYSCLK/4)
 
 /******************************************************************************
  * 硬件配置

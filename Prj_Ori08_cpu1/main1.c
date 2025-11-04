@@ -1,3 +1,4 @@
+#define CPU1 1
 //****************************************************************************
 //
 // 文件名: main1.c (CPU1主程序)
@@ -36,10 +37,10 @@ uint16_t multiplier = 0;       // 乘数因子：0-255循环递增
 // 20ms周期控制标志
 volatile uint16_t flag_20ms_write = 0;  // 20ms写入标志
 
+// 10ms SPI发送标志（用于AD5754R通信测试）
+volatile uint16_t flag_10ms_spi = 0;
+
 // SPI任务控制标志（20kHz处理）
-
-
-
 
 // 定时器控制变量（保留原有业务逻辑）
 unsigned int IPC_Timer_1MS = 0;
@@ -57,9 +58,7 @@ void Shared_Ram_dataRead_c1(void);   // 从GS0读取并验证数据
 // SPI通信
 //
 volatile Uint16 spiARxBuffer[4];
-volatile Uint16 spiBRxBuffer[4];
 interrupt void spiARxISR(void);
-interrupt void spiBRxISR(void);   // 从GS0读取并验证数据
 
 
 
@@ -80,7 +79,14 @@ void main(void)
     // ===== 主循环 =====
     while(1)
     {
+        // ===== 10ms任务（SPIB发送，用于AD5754R通信测试） =====
+        if(flag_10ms_spi )
+        {
+            flag_10ms_spi = 0;   // 清除标志
 
+            // 周期性AD5754R通信测试（写入-读取验证）
+            Test_AD5754R_Communication();
+        }
 
         // ===== 20ms任务（IPC通信 + 喂狗） =====
         if(flag_20ms_write)
@@ -100,10 +106,8 @@ void main(void)
             IPCLtoRFlagSet(IPC_FLAG10);
 
             // 喂狗（新增）
-             Drv_Watchdog_Kick(); //
+//             Drv_Watchdog_Kick(); //
         }
-
-
 
         // ===== 原有IPC读取任务（保持不变） =====
         if(IPCRtoLFlagBusy(IPC_FLAG11) == 1)
@@ -166,19 +170,17 @@ void Shared_Ram_dataRead_c1(void)
 //****************************************************************************
 // 函数名: cpu_timer0_isr
 // 功能: CPU定时器0中断服务程序
-// 说明: 50us定时中断（修改为20kHz），实现多级任务周期标志
+// 说明: 50us定时中断（20kHz），实现多级任务周期标志
 //****************************************************************************
 interrupt void cpu_timer0_isr(void)
 {
     static uint16_t counter_20ms = 0;
     static uint16_t counter_250us = 0;   // 250us计数器（用于IPC_Timer_1MS兼容）
-    static uint16_t spi_task_counter = 0;
-    static uint16_t spia_frame_count = 0;
-    static uint16_t spib_frame_count = 0;
+    static uint16_t counter_10ms = 0;    // 10ms计数器（用于SPI发送）
 
     counter_20ms++;
     counter_250us++;
-    spi_task_counter++;
+    counter_10ms++;
 
     // 保持IPC_Timer_1MS的原有时基（每250us增加1）
     if(counter_250us >= 5) {  // 5 * 50us = 250us
@@ -192,22 +194,10 @@ interrupt void cpu_timer0_isr(void)
         counter_20ms = 0;
     }
 
-    // ===== SPI Tasks (10ms & 20ms) =====
-    if (spi_task_counter >= 200) // 10ms task
-    {
-        SpiaRegs.SPITXBUF = 0xEB90;
-        SpiaRegs.SPITXBUF = 0x0111;
-        SpiaRegs.SPITXBUF = spia_frame_count++;
-        SpiaRegs.SPITXBUF = 0xAA55;
-
-        if (spi_task_counter >= 400) // 20ms task
-        {
-            spi_task_counter = 0;
-            SpibRegs.SPITXBUF = 0xEB90;
-            SpibRegs.SPITXBUF = 0x0212;
-            SpibRegs.SPITXBUF = spib_frame_count++;
-            SpibRegs.SPITXBUF = 0xAA55;
-        }
+    // ===== 10ms任务标志（SPIB发送，用于AD5754R通信测试） =====
+    if(counter_10ms >= 200) { // 每200次触发（200 * 50us = 10ms）
+        flag_10ms_spi = 1;
+        counter_10ms = 0;
     }
 
     // 应答PIE组1中断
@@ -226,9 +216,7 @@ void System_Init(void)
 
     // ===== 步骤2: 初始化GPIO =====
     InitGpio();
-    InitSpiGpios(); // 添加SPI GPIO初始化
-    InitSpiModules(); // 添加SPI模块初始化
-
+    
     EALLOW;
     GPIO_SetupPinMux(135, GPIO_MUX_CPU2, 0);
     GPIO_SetupPinMux(136, GPIO_MUX_CPU2, 0);
@@ -251,12 +239,21 @@ void System_Init(void)
     EALLOW;
     PieVectTable.TIMER0_INT = &cpu_timer0_isr;
     EDIS;
+    
+    // ===== 步骤3.5: 确保SPIB分配给CPU1（在初始化SPI之前）=====
+    EALLOW;
+    DevCfgRegs.CPUSEL6.bit.SPI_B = 0;  // SPIB分配给CPU1 (0=CPU1, 1=CPU2)
+    EDIS;
+    
+    // ===== 步骤3.6: 初始化SPI（确保所有权正确后再初始化）=====
+    InitSpiGpios();   // SPI GPIO初始化
+    InitSpiModules(); // SPI模块初始化（此时中断已配置好）
 
     // ===== 步骤4: 配置共享RAM和外设所有权 =====
     // 静态分配GS0给CPU2，分配SCIA所有权给CPU2
     EALLOW;
     MemCfgRegs.GSxMSEL.bit.MSEL_GS0 = 1;  // GS0分配给CPU2
-    DevCfgRegs.CPUSEL5.bit.SCI_A = 1;//SCIA分配给CPU2
+    DevCfgRegs.CPUSEL5.bit.SCI_A = 1;     // SCIA分配给CPU2
     EDIS;
     InitSciGpio();//为在CPU2运行的SCIA的GPIO初始化
     // ===== 步骤5: 通知CPU2配置完成并启动CPU2 =====
@@ -270,18 +267,6 @@ void System_Init(void)
         IPCBootCPU2(C1C2_BROM_BOOTMODE_BOOT_FROM_RAM);
     #endif
 
-
-
-
-
-
-
-
-
-
-
-
-
     // ===== 步骤7: 初始化并启动定时器 =====
     InitCpuTimers();
     ConfigCpuTimer(&CpuTimer0, 200, 50);  // 200MHz, 50us周期（修改为20kHz）
@@ -293,8 +278,8 @@ void System_Init(void)
 
     // ===== 步骤9: 等待CPU2就绪 =====
     // 等待CPU2发送就绪标志
-    while(!IPCRtoLFlagBusy(IPC_FLAG17));
-    IPCRtoLFlagAcknowledge(IPC_FLAG17);
+//    while(!IPCRtoLFlagBusy(IPC_FLAG17));
+//    IPCRtoLFlagAcknowledge(IPC_FLAG17);
 
     // ===== 步骤10: 全局数据结构初始化（新增） =====
     GlobalData_Init();  // 初始化全局数据结构（ADC/DAC数据）
@@ -309,38 +294,31 @@ void System_Init(void)
 
 //****************************************************************************
 // 函数名: spiARxISR
-// 功能: SPIA接收FIFO中断
+// 功能: SPIA接收FIFO中断服务程序
+// 说明: 当RX FIFO中的字数 >= RXFFIL(4)时触发
 //****************************************************************************
 interrupt void spiARxISR(void)
 {
     Uint16 i;
-    for(i=0; i<4; i++)
+    Uint16 fifoLevel;
+    
+    // 读取FIFO中的所有数据
+    fifoLevel = SpiaRegs.SPIFFRX.bit.RXFFST;
+    
+    for(i = 0; i < fifoLevel && i < 4; i++)
     {
         spiARxBuffer[i] = SpiaRegs.SPIRXBUF;
     }
-
-    // 在这里添加数据处理逻辑
-
-    SpiaRegs.SPIFFRX.bit.RXFFINTCLR = 1;  // Clear Interrupt Flag
-    PieCtrlRegs.PIEACK.all = PIEACK_GROUP6; // Acknowledge PIE Group 6
-}
-
-//****************************************************************************
-// 函数名: spiBRxISR
-// 功能: SPIB接收FIFO中断
-//****************************************************************************
-interrupt void spiBRxISR(void)
-{
-    Uint16 i;
-    for(i=0; i<4; i++)
+    
+    // 检查并清除溢出标志
+    if(SpiaRegs.SPIFFRX.bit.RXFFOVF == 1)
     {
-        spiBRxBuffer[i] = SpibRegs.SPIRXBUF;
+        SpiaRegs.SPIFFRX.bit.RXFFOVFCLR = 1;
     }
-
-    // 在这里添加数据处理逻辑
-
-    SpibRegs.SPIFFRX.bit.RXFFINTCLR = 1;  // Clear Interrupt Flag
-    PieCtrlRegs.PIEACK.all = PIEACK_GROUP6; // Acknowledge PIE Group 6
+    
+    // 清除中断标志
+    SpiaRegs.SPIFFRX.bit.RXFFINTCLR = 1;
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP6;
 }
 
 //
