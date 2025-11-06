@@ -8,8 +8,8 @@
 // 文件名: drv_spi.h
 // 功能: SPIA与SPIB驱动头文件
 // 说明:
-//   - SPIA: 主模式，GPIO54-57，16位，Mode 0 (CPOL=0, CPHA=0)
-//   - SPIB: 主模式，GPIO24-27，8位，Mode 2 (CPOL=1, CPHA=0)
+//   - SPIA: 主模式，GPIO54-57，16位，2MHz，Mode 0 (CPOL=0, CPHA=0)
+//   - SPIB: 主模式，GPIO24-27，8位，500kHz，Mode 1 (CPOL=0, CPHA=1)
 //
 //****************************************************************************
 
@@ -21,7 +21,7 @@
 
 // SPI波特率配置（LSPCLK=50MHz，LSPCLKDIV=2，SYSCLK/4分频）
 #define SPIA_BAUDRATE           24      // 50MHz/(24+1) = 2MHz
-#define SPIB_BAUDRATE           49      // 50MHz/(49+1) = 1MHz (降低频率便于测试)
+#define SPIB_BAUDRATE           49      // 50MHz/(49+1) = 1MHz
 
 // SPI数据位宽配置
 #define SPIA_CHAR_LENGTH        15      // SPIA: 16位 (15表示16位)
@@ -116,14 +116,32 @@ void SpibSendDataBlock(Uint16 *data, Uint16 length);      // 批量数据发送�
 //==========================================================
 void AD5754_Send24BitCommand(uint32_t command);
 uint32_t AD5754_Send24BitCommand_WithRead(uint32_t command);
+
+// FIFO批量传输函数（优化版本）
+void AD5754_Send24BitCommand_FIFO(uint32_t command);
+uint32_t AD5754_Send24BitCommand_WithRead_FIFO(uint32_t command);
+
 void AD5754R_Init(void);                    // AD5754R初始化（只执行一次）
 void Test_AD5754R_Communication(void);      // 周期性通信测试（只读取）
+void Test_AD5754R_PowerRegister(void);      // 电源寄存器写入和读回验证（只执行一次）
+void Test_AD5754R_DACRegister(void);        // DAC寄存器循环测试
 
 // AD5754R通信测试变量声明
 extern volatile uint32_t ad5754_test_write_value;
 extern volatile uint32_t ad5754_test_read_value;
 extern volatile uint16_t ad5754_comm_test_pass;
 extern volatile uint16_t ad5754_initialized;
+
+// 电源寄存器测试变量声明
+extern volatile uint16_t ad5754_power_test_done;      // 电源寄存器测试完成标志
+extern volatile uint32_t ad5754_power_readback;       // 电源寄存器读回值
+extern volatile uint16_t ad5754_power_test_pass;      // 电源寄存器测试通过标志
+
+// DAC寄存器测试变量声明
+extern volatile uint32_t ad5754_dac_write_value;      // DAC写入值
+extern volatile uint32_t ad5754_dac_readback_value;   // DAC读回值
+extern volatile uint16_t ad5754_dac_test_pass;        // DAC测试通过标志
+extern volatile uint16_t ad5754_dac_test_count;       // DAC测试计数器
 
 // AD5754R初始化专用调试变量声明（不会被周期性通信覆盖）
 extern volatile uint32_t ad5754_init_ctrl_cmd;      // 初始化时写入控制寄存器的命令

@@ -5,7 +5,7 @@
 //
 // 说明:
 //   - SPIA: 主模式，GPIO54-57，16位，2MHz，Mode 0 (CPOL=0, CPHA=0)
-//   - SPIB: 主模式，GPIO24-27，8位，500kHz，Mode 2 (CPOL=1, CPHA=0)
+//   - SPIB: 主模式，GPIO24-27，8位，500kHz，Mode 1 (CPOL=0, CPHA=1)
 //
 // 配置流程:
 //   1. 使能外设时钟
@@ -293,7 +293,7 @@ void Drv_InitSpibModule(void)
     // 步骤3: 配置SPICTL寄存器
     //==========================================================
     SpibRegs.SPICTL.bit.MASTER_SLAVE = SPI_MODE_MASTER;  // 1=主模式
-    SpibRegs.SPICTL.bit.CLK_PHASE = SPIB_CLK_PHASE;      // ✅ Mode 2: CPHA=0 (数据在下降沿采样)
+    SpibRegs.SPICTL.bit.CLK_PHASE = SPIB_CLK_PHASE;      // ✅ Mode 1: CPHA=1 (数据在下降沿采样)
     SpibRegs.SPICTL.bit.TALK = 1;           // 使能发送
     SpibRegs.SPICTL.bit.OVERRUNINTENA = 0;  // 禁用溢出中断（FIFO模式不使用）
     SpibRegs.SPICTL.bit.SPIINTENA = 0;      // 禁用SPI中断（FIFO模式不使用）
@@ -351,7 +351,7 @@ void Drv_InitSpibModule(void)
     //==========================================================
     // ❗某些操作可能清除SPICTL寄存器，在释放复位前再次设置
     SpibRegs.SPICTL.bit.MASTER_SLAVE = 1;   // 强制主模式
-    SpibRegs.SPICTL.bit.CLK_PHASE = 0;      // 强制CPHA=0
+    SpibRegs.SPICTL.bit.CLK_PHASE = 0;      // 强制CPHA=1 (Mode 1)
     SpibRegs.SPICTL.bit.TALK = 1;           // 强制使能发送
     
     //==========================================================
@@ -462,49 +462,183 @@ static uint16_t SpibTransmitReceive_helper(uint16_t data)
 {
     uint16_t timeout = 0;
     uint16_t rx_count_before, rx_count_after;
+    uint16_t rx_data;
     
     // 记录发送前RX FIFO的数据数量
     rx_count_before = SpibRegs.SPIFFRX.bit.RXFFST;
     
-    // 发送数据
+    // 发送数据（8位SPI模式：数据左对齐到高8位）
     SpibRegs.SPITXBUF = (data << 8);
     
     // 等待接收FIFO数量增加（表示新数据接收完成）
     do {
         rx_count_after = SpibRegs.SPIFFRX.bit.RXFFST;
         timeout++;
-        if (timeout > 10000) return 0xFF; // 超时返回错误码
+        if (timeout > 10000) return 0xFFFF; // 超时返回错误码（16位全1）
         DELAY_US(1);
     } while(rx_count_after <= rx_count_before);
     
-    // 读取接收到的数据
-    return SpibRegs.SPIRXBUF & 0xFF;
+    // 读取接收到的数据 - 保留完整16位，避免移位导致数据丢失
+    // 在调试时可以观察数据实际在高8位还是低8位
+    rx_data = SpibRegs.SPIRXBUF;
+    return rx_data;  // 返回完整16位数据
 }
 
 //****************************************************************************
 // 函数名: AD5754_Send24BitCommand_WithRead
 // 功能: 发送24位命令并同时接收返回数据（重构优化版）
-// 说明: 简化了实现，并为每个字节的接收添加了超时处理
+// 说明: 保留完整16位接收数据，提取低8位和高8位用于调试
 //****************************************************************************
+// 调试变量：用于观察接收到的原始16位数据
+volatile uint16_t debug_rx_word1 = 0;
+volatile uint16_t debug_rx_word2 = 0;
+volatile uint16_t debug_rx_word3 = 0;
+volatile uint32_t debug_result_low8 = 0;   // 从低8位提取的结果
+volatile uint32_t debug_result_high8 = 0;  // 从高8位提取的结果
+
 uint32_t AD5754_Send24BitCommand_WithRead(uint32_t command)
 {
-    uint16_t rx_byte1, rx_byte2, rx_byte3;
+    uint16_t rx_word1, rx_word2, rx_word3;
 
     // 开始SPI通信
     AD5754_SYNC_LOW();
     DELAY_US(1);
 
-    // 连续发送和接收3个字节
-    rx_byte1 = SpibTransmitReceive_helper((command >> 16) & 0xFF);
-    rx_byte2 = SpibTransmitReceive_helper((command >> 8) & 0xFF);
-    rx_byte3 = SpibTransmitReceive_helper(command & 0xFF);
+    // 连续发送和接收3个字节（保留完整16位）
+    rx_word1 = SpibTransmitReceive_helper((command >> 16) & 0xFF);
+    rx_word2 = SpibTransmitReceive_helper((command >> 8) & 0xFF);
+    rx_word3 = SpibTransmitReceive_helper(command & 0xFF);
 
     // 结束SPI通信
     AD5754_SYNC_HIGH();
     DELAY_US(1);
 
-    // 组合接收到的数据并返回
-    return ((uint32_t)rx_byte1 << 16) | ((uint32_t)rx_byte2 << 8) | rx_byte3;
+    // 保存到调试变量，方便在调试器中观察原始数据
+    debug_rx_word1 = rx_word1;
+    debug_rx_word2 = rx_word2;
+    debug_rx_word3 = rx_word3;
+
+    // 方案1：从低8位提取数据（根据TI手册，8位SPI接收数据应该在低8位）
+    debug_result_low8 = ((uint32_t)(rx_word1 & 0xFF) << 16) | 
+                        ((uint32_t)(rx_word2 & 0xFF) << 8) | 
+                        (rx_word3 & 0xFF);
+    
+    // 方案2：从高8位提取数据（备选方案）
+    debug_result_high8 = ((uint32_t)(rx_word1 >> 8) << 16) | 
+                         ((uint32_t)(rx_word2 >> 8) << 8) | 
+                         (rx_word3 >> 8);
+    
+    // 先返回低8位方案（如果不对，可以在调试时查看debug_result_high8）
+    return debug_result_low8;
+}
+
+//****************************************************************************
+// 函数名: AD5754_Send24BitCommand_FIFO
+// 功能: 使用FIFO批量模式发送24位命令到AD5754R
+// 说明: 一次性写入3个字节到TX FIFO，硬件自动连续发送，无需逐字节等待
+//       充分利用FIFO硬件特性，提高传输可靠性和效率
+//****************************************************************************
+void AD5754_Send24BitCommand_FIFO(uint32_t command)
+{
+    volatile Uint16 dummy;
+    uint16_t timeout = 0;
+    
+    // 步骤1：清空RX FIFO（避免旧数据干扰）
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0) {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // 步骤2：拉低SYNC，开始SPI通信
+    AD5754_SYNC_LOW();
+    DELAY_US(1);
+    
+    // 步骤3：批量写入3个字节到TX FIFO
+    // 硬件会自动连续发送，产生连续的24个时钟脉冲
+    SpibRegs.SPITXBUF = ((command >> 16) & 0xFF) << 8;  // 字节1（高字节）
+    SpibRegs.SPITXBUF = ((command >> 8) & 0xFF) << 8;   // 字节2（中字节）
+    SpibRegs.SPITXBUF = (command & 0xFF) << 8;          // 字节3（低字节）
+    
+    // 步骤4：等待传输完成（RX FIFO收到3个字节）
+    while(SpibRegs.SPIFFRX.bit.RXFFST < 3) {
+        timeout++;
+        if(timeout > 10000) {
+            AD5754_SYNC_HIGH();
+            return;  // 超时退出
+        }
+        DELAY_US(1);
+    }
+    
+    // 步骤5：清空RX FIFO（丢弃接收到的数据）
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0) {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // 步骤6：拉高SYNC，结束SPI通信
+    AD5754_SYNC_HIGH();
+    DELAY_US(1);
+}
+
+//****************************************************************************
+// 函数名: AD5754_Send24BitCommand_WithRead_FIFO
+// 功能: 使用FIFO批量模式发送24位命令并读取返回数据
+// 说明: 批量写入3字节，批量读取3字节，充分利用FIFO硬件
+//       相比逐字节方式，减少软件干预，提高时序可靠性
+//****************************************************************************
+uint32_t AD5754_Send24BitCommand_WithRead_FIFO(uint32_t command)
+{
+    volatile Uint16 dummy;
+    uint16_t rx_data1, rx_data2, rx_data3;
+    uint16_t timeout = 0;
+    
+    // 步骤1：清空RX FIFO
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0) {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // 步骤2：拉低SYNC
+    AD5754_SYNC_LOW();
+    DELAY_US(1);
+    
+    // 步骤3：批量写入3个字节到TX FIFO
+    SpibRegs.SPITXBUF = ((command >> 16) & 0xFF) << 8;
+    SpibRegs.SPITXBUF = ((command >> 8) & 0xFF) << 8;
+    SpibRegs.SPITXBUF = (command & 0xFF) << 8;
+    
+    // 步骤4：等待RX FIFO收到3个字节
+    while(SpibRegs.SPIFFRX.bit.RXFFST < 3) {
+        timeout++;
+        if(timeout > 10000) {
+            AD5754_SYNC_HIGH();
+            return 0xFFFFFF;  // 超时错误
+        }
+        DELAY_US(1);
+    }
+    
+    // 步骤5：批量读取3个字节（FIFO先进先出）
+    rx_data1 = SpibRegs.SPIRXBUF;  // 读取第1个字节
+    rx_data2 = SpibRegs.SPIRXBUF;  // 读取第2个字节
+    rx_data3 = SpibRegs.SPIRXBUF;  // 读取第3个字节
+    
+    // 步骤6：拉高SYNC
+    AD5754_SYNC_HIGH();
+    DELAY_US(1);
+    
+    // 步骤7：保存调试变量
+    debug_rx_word1 = rx_data1;
+    debug_rx_word2 = rx_data2;
+    debug_rx_word3 = rx_data3;
+    
+    // 步骤8：提取低8位和高8位（用于调试判断数据位置）
+    debug_result_low8 = ((uint32_t)(rx_data1 & 0xFF) << 16) | 
+                        ((uint32_t)(rx_data2 & 0xFF) << 8) | 
+                        (rx_data3 & 0xFF);
+    
+    debug_result_high8 = ((uint32_t)(rx_data1 >> 8) << 16) | 
+                         ((uint32_t)(rx_data2 >> 8) << 8) | 
+                         (rx_data3 >> 8);
+    
+    // 返回低8位结果（根据之前的分析，数据在低8位）
+    return debug_result_low8;
 }
 
 //****************************************************************************
@@ -538,6 +672,17 @@ volatile uint16_t ad5754_init_success = 0;        // 初始化成功标志（1=�
 volatile uint16_t gpio25_with_pullup = 0;
 volatile uint16_t gpio25_without_pullup = 0;
 volatile uint16_t gpio25_test_done = 0;
+
+// 电源寄存器测试变量
+volatile uint16_t ad5754_power_test_done = 0;       // 电源寄存器测试完成标志
+volatile uint32_t ad5754_power_readback = 0;        // 电源寄存器读回值
+volatile uint16_t ad5754_power_test_pass = 0;       // 电源寄存器测试通过标志
+
+// DAC寄存器测试变量
+volatile uint32_t ad5754_dac_write_value = 0;       // DAC写入值
+volatile uint32_t ad5754_dac_readback_value = 0;    // DAC读回值
+volatile uint16_t ad5754_dac_test_pass = 0;         // DAC测试通过标志
+volatile uint16_t ad5754_dac_test_count = 0;        // DAC测试计数器
 
 //****************************************************************************
 // 函数名: Test_GPIO25_InputCapability
@@ -875,6 +1020,171 @@ void SpibSendDataBlock(Uint16 *data, Uint16 length)
 
     AD5754_SYNC_HIGH();
     DELAY_US(1);
+}
+
+//****************************************************************************
+// 函数名: Test_AD5754R_PowerRegister
+// 功能: 电源寄存器写入和读回验证（只执行一次）
+// 说明:
+//   1. 写入电源控制寄存器 = 0x1F (全部上电)
+//      发送: 10 00 1F
+//   2. 读回验证
+//      发送: 90 00 00 (读电源寄存器命令)
+//      发送: 18 00 00 (NOP命令获取读回数据)
+//      预期: 00 00 1F
+//****************************************************************************
+void Test_AD5754R_PowerRegister(void)
+{
+    uint32_t write_cmd, read_cmd, nop_cmd;
+    uint32_t read_back_value;
+    volatile Uint16 dummy;
+    
+    // 如果已经测试过，直接返回
+    if (ad5754_power_test_done)
+    {
+        return;
+    }
+    
+    // === 步骤1: 清空RX FIFO ===
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0)
+    {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // === 步骤2: 写入电源控制寄存器 = 0x1F (全部上电) ===
+    // 命令: 10 00 1F
+    // R/W=0, REG=010(电源控制寄存器), A2:A0=000, Data=0x001F
+    write_cmd = 0x10001F;  // 直接使用十六进制格式
+    AD5754_Send24BitCommand_FIFO(write_cmd);
+    DELAY_US(1000);  // 等待写入完成
+    
+    // === 步骤3: 清空写入操作产生的接收数据 ===
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0)
+    {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // === 步骤4: 发送读电源寄存器命令 ===
+    // 命令: 90 00 00
+    // R/W=1, REG=010(电源控制寄存器), A2:A0=000
+    read_cmd = 0x900000;  // 直接使用十六进制格式
+    AD5754_Send24BitCommand_FIFO(read_cmd);
+    DELAY_US(100);
+    
+    // === 步骤5: 清空读命令产生的接收数据 ===
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0)
+    {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // === 步骤6: 发送NOP命令并读取返回数据 ===
+    // 命令: 18 00 00
+    // R/W=0, REG=011(控制寄存器), A2:A0=000 (NOP)
+    // ⚠️ 关键：在此传输周期中，芯片会在SDO上输出之前读命令选择的寄存器数据
+    nop_cmd = 0x180000;  // 直接使用十六进制格式
+    
+    // 使用FIFO批量传输方式（优化版本）
+    read_back_value = AD5754_Send24BitCommand_WithRead_FIFO(nop_cmd);
+    
+    // 原方式（保留用于对比）
+    // read_back_value = AD5754_Send24BitCommand_WithRead(nop_cmd);
+    
+    // 保存读回值
+    ad5754_power_readback = read_back_value;
+    
+    // === 步骤7: 验证读取到的值 ===
+    // 预期: 00 00 1F (低字节为0x1F)
+    if ((read_back_value & 0x00001F) == 0x1F)
+    {
+        ad5754_power_test_pass = 1;  // 测试通过
+    }
+    else
+    {
+        ad5754_power_test_pass = 0;  // 测试失败
+    }
+    
+    // 标记测试完成
+    ad5754_power_test_done = 1;
+}
+
+//****************************************************************************
+// 函数名: Test_AD5754R_DACRegister
+// 功能: DAC寄存器测试
+// 说明:
+//   写入DAC A = 0xABCD，读回验证
+//****************************************************************************
+void Test_AD5754R_DACRegister(void)
+{
+    uint32_t write_cmd, read_cmd, nop_cmd;
+    uint32_t read_back_value;
+    uint16_t test_value;
+    volatile Uint16 dummy;
+    ad5754_dac_test_count ++;
+    // 固定测试值
+    test_value = 0xABCD;
+    
+    // === 步骤1: 清空RX FIFO ===
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0)
+    {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // === 步骤2: 写入DAC A寄存器 ===
+    // 命令格式: 00 XX XX
+    // R/W=0, REG=000(DAC寄存器), A2:A0=000(通道A), Data=test_value
+    write_cmd = (AD5754_WRITE_CMD) | 
+                ((uint32_t)AD5754_REG_DAC << 19) |   // REG=000
+                ((uint32_t)AD5754_CH_A << 16) |      // Channel A
+                test_value;                           // 16位DAC值
+    
+    ad5754_dac_write_value = write_cmd;  // 保存写入命令
+    AD5754_Send24BitCommand_FIFO(write_cmd);
+    DELAY_US(100);
+    
+    // === 步骤3: 清空写入操作产生的接收数据 ===
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0)
+    {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // === 步骤4: 发送读DAC A寄存器命令 ===
+    // 命令: 80 00 00
+    // R/W=1, REG=000(DAC寄存器), A2:A0=000(通道A)
+    read_cmd = 0x800000;  // 直接使用十六进制格式
+    AD5754_Send24BitCommand_FIFO(read_cmd);
+    DELAY_US(100);
+    
+    // === 步骤5: 清空读命令产生的接收数据 ===
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0)
+    {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // === 步骤6: 发送NOP命令并读取返回数据 ===
+    // 命令: 18 00 00
+    // R/W=0, REG=011(控制寄存器), A2:A0=000 (NOP)
+    // ⚠️ 关键：在此传输周期中，芯片会在SDO上输出之前读命令选择的寄存器数据
+    nop_cmd = 0x180000;  // 直接使用十六进制格式
+    
+    // 使用FIFO批量传输方式（优化版本）
+    read_back_value = AD5754_Send24BitCommand_WithRead_FIFO(nop_cmd);
+    
+    // 原方式（保留用于对比）
+    // read_back_value = AD5754_Send24BitCommand_WithRead(nop_cmd);
+    
+    // 保存读回值
+    ad5754_dac_readback_value = read_back_value;
+    
+    // === 步骤7: 验证读取到的值 ===
+    // 预期: 读回的低16位应该等于0xABCD
+    if ((read_back_value & 0xFFFF) == 0xABCD)
+    {
+        ad5754_dac_test_pass = 1;  // 测试通过
+    }
+    else
+    {
+        ad5754_dac_test_pass = 0;  // 测试失败
+    }
 }
 
 //

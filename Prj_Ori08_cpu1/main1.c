@@ -76,49 +76,50 @@ void main(void)
     multiplier = 0;
     flag_20ms_write = 0;
 
-
+    Test_AD5754R_PowerRegister();
     // ===== 主循环 =====
     while(1)
     {
+
         // ===== 2ms任务（SPIB发送，用于AD5754R通信测试） =====
         if(flag_10ms_spi )
         {
             flag_10ms_spi = 0;   // 清除标志
 
             // 周期性AD5754R通信测试（写入-读取验证）
-            Test_AD5754R_Communication();
+            Test_AD5754R_DACRegister();
         }
 
-        // ===== 20ms任务（IPC通信 + 喂狗） =====
-        if(flag_20ms_write)
-        {
-            flag_20ms_write = 0;  // 清除标志
-
-            // 更新乘数因子（循环0-255）
-            if(multiplier++ > 255)
-            {
-                multiplier = 0;
-            }
-
-            // 写入GS1共享RAM
-            Shared_Ram_dataWrite_c1();
-
-            // 设置FLAG10，通知CPU2数据已准备好
-            IPCLtoRFlagSet(IPC_FLAG10);
-
-            // 喂狗（新增）
-//             Drv_Watchdog_Kick(); //
-        }
-
-        // ===== 原有IPC读取任务（保持不变） =====
-        if(IPCRtoLFlagBusy(IPC_FLAG11) == 1)
-        {
-            // 读取CPU2写入的GS0数据并验证
-            Shared_Ram_dataRead_c1();
-
-            // ACK清除FLAG11
-            IPCRtoLFlagAcknowledge(IPC_FLAG11);
-        }
+//        // ===== 20ms任务（IPC通信 + 喂狗） =====
+//        if(flag_20ms_write)
+//        {
+//            flag_20ms_write = 0;  // 清除标志
+//
+//            // 更新乘数因子（循环0-255）
+//            if(multiplier++ > 255)
+//            {
+//                multiplier = 0;
+//            }
+//
+//            // 写入GS1共享RAM
+//            Shared_Ram_dataWrite_c1();
+//
+//            // 设置FLAG10，通知CPU2数据已准备好
+//            IPCLtoRFlagSet(IPC_FLAG10);
+//
+//            // 喂狗（新增）
+////             Drv_Watchdog_Kick(); //
+//        }
+//
+//        // ===== 原有IPC读取任务（保持不变） =====
+//        if(IPCRtoLFlagBusy(IPC_FLAG11) == 1)
+//        {
+//            // 读取CPU2写入的GS0数据并验证
+//            Shared_Ram_dataRead_c1();
+//
+//            // ACK清除FLAG11
+//            IPCRtoLFlagAcknowledge(IPC_FLAG11);
+//        }
     }
 }
 
