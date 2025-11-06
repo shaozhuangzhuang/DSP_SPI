@@ -74,7 +74,10 @@ void InitPieCtrl(void)
 }
 
 //
-// EnableInterrupts - This function enables the PIE module and CPU __interrupts
+// EnableInterrupts - This function enables the PIE module and CPU interrupts
+//
+// 说明：这是一个通用函数，只负责全局使能中断。
+//       具体的中断组（IER）和中断位（PIEIER）应由应用代码在调用此函数前配置。
 //
 void EnableInterrupts()
 {
@@ -82,32 +85,25 @@ void EnableInterrupts()
     // Enable the PIE
     //
     PieCtrlRegs.PIECTRL.bit.ENPIE = 1;
+    IER |= M_INT1 | M_INT6 | M_INT7; // 使能CPU中断组1(Timer0), 6(SPI), 7(DMA)
 
-    // 使能CPU中断组
-    IER |= M_INT1;   // 使能INT1组（Timer0 + XINT2）
-    IER |= M_INT7;   // 使能INT7组（DMA中断）
-    IER |= M_INT8;
-    IER |= M_INT9;
-    IER |= M_INT12;
-    IER |= M_INT13;
-    IER |= M_INT14;
+
 
     // 使能PIE中断
-    PieCtrlRegs.PIEIER12.bit.INTx3 = 1;  // 外部中断5
-    PieCtrlRegs.PIEIER1.bit.INTx7 = 1;   // Timer0
-    PieCtrlRegs.PIEIER1.bit.INTx5 = 1;   // XINT2
-    PieCtrlRegs.PIEIER7.bit.INTx1 = 1;   // DMA CH1
-    PieCtrlRegs.PIEIER7.bit.INTx2 = 1;   // DMA CH2
-    PieCtrlRegs.PIEIER7.bit.INTx5 = 1;   // DMA CH5
-
+    PieCtrlRegs.PIEIER1.bit.INTx7 = 1; // CPU Timer 0
+    PieCtrlRegs.PIEIER6.bit.INTx1 = 1; // SPIA RX
+    PieCtrlRegs.PIEIER7.bit.INTx6 = 1; // 使能DMA CH6中断
+    PieCtrlRegs.PIEIER7.bit.INTx5 = 1; // 使能DMA CH5中断
     //
-//  PieCtrlRegs.PIEACK.all = 0xFFFF;
+    // Clear all PIE acknowledge bits (optional, ensures clean state)
+    //
+    PieCtrlRegs.PIEACK.all = 0xFFFF;
 
     //
     // Enable Interrupts at the CPU level
     //
-    EINT;
-    ERTM;  // Enable Global realtime interrupt DBGM
+    EINT;   // Enable global interrupts
+    ERTM;   // Enable global realtime interrupt DBGM
 }
 
 //

@@ -22,6 +22,10 @@
 #include "Framework/system_config.h"
 #include "Framework/global_data.h"
 #include "Drivers/drv_spi.h"
+#include "Drivers/drv_dma.h" // 新增：包含DMA驱动
+
+// --- 新增：模式切换宏 ---
+#define USE_DMA_MODE    1   // 0: FIFO模式, 1: DMA模式
 
 // ===== 全局变量定义 =====
 // 共享RAM数组定义（减少到24个元素）
@@ -29,6 +33,8 @@ uint16_t c1_r_array[24];       // CPU1只读，CPU2写入，映射到GS0（CPU2�
 uint16_t c1_r_w_array[24];     // CPU1读写，映射到GS1（CPU1拥有）
 #pragma DATA_SECTION(c1_r_array,"SHARERAMGS0");
 #pragma DATA_SECTION(c1_r_w_array,"SHARERAMGS1");
+
+
 
 // 通信控制变量
 uint16_t error = 0;            // 错误标志：数据验证失败时置1
@@ -87,7 +93,11 @@ void main(void)
             flag_10ms_spi = 0;   // 清除标志
 
             // 周期性AD5754R通信测试（写入-读取验证）
-            Test_AD5754R_DACRegister();
+            #if USE_DMA_MODE
+            Test_AD5754R_DACRegister_DMA(); // 调用DMA模式测试函数
+            #else
+            Test_AD5754R_DACRegister();     // 调用FIFO模式测试函数
+            #endif
         }
 
 //        // ===== 20ms任务（IPC通信 + 喂狗） =====
@@ -235,22 +245,22 @@ void System_Init(void)
 
     InitPieVectTable();  // 初始化PIE向量表
 
-    // 注册中断向量
-    InitSpiInterrupts(); // 添加SPI中断初始化(包含ISR注册和PIE使能)
-
+     // SPIB不使能RX中断
     EALLOW;
     PieVectTable.TIMER0_INT = &cpu_timer0_isr;
+    // --- 新增DMA中断向量注册 ---
+    PieVectTable.DMA_CH6_INT = &DMA_CH6_ISR;
+    PieVectTable.DMA_CH5_INT = &DMA_CH5_ISR;
+    PieVectTable.SPIA_RX_INT = &spiARxISR;  // 使能SPIA RX中断
     EDIS;
-    
-    // ===== 步骤3.5: 确保SPIB分配给CPU1（在初始化SPI之前）=====
-    EALLOW;
-    DevCfgRegs.CPUSEL6.bit.SPI_B = 0;  // SPIB分配给CPU1 (0=CPU1, 1=CPU2)
-    EDIS;
+
     
     // ===== 步骤3.6: 初始化SPI（确保所有权正确后再初始化）=====
     InitSpiGpios();   // SPI GPIO初始化
     InitSpiModules(); // SPI模块初始化（此时中断已配置好）
-
+    // --- DMA初始化（所有配置整合到一个函数中） ---
+    Drv_DMA_Config_SPIB();  // DMA控制器初始化 + SPIB通道配置
+    start_dma();
     // ===== 步骤4: 配置共享RAM和外设所有权 =====
     // 静态分配GS0给CPU2，分配SCIA所有权给CPU2
     EALLOW;
@@ -275,7 +285,7 @@ void System_Init(void)
     CpuTimer0Regs.TCR.all = 0x4000;       // 启动定时器
 
     // ===== 步骤8: 使能中断 =====
-    IER |= M_INT1 | M_INT6; // 使能CPU中断组1(Timer0)和6(SPI)
+
     EnableInterrupts();
 
     // ===== 步骤9: 等待CPU2就绪 =====

@@ -2,6 +2,7 @@
 #define DRV_SPI_H_
 
 #include "F28x_Project.h"
+#include "drv_dma.h" // 新增：包含DMA驱动头文件
 
 //****************************************************************************
 //
@@ -43,10 +44,10 @@
 #define SPIA_CLK_POLARITY       SPI_CLK_POLARITY_LOW    // SPIA: Mode 0 (CPOL=0)
 #define SPIA_CLK_PHASE          SPI_CLK_PHASE_NORMAL    // SPIA: Mode 0 (CPHA=0)
 
-// ✅ AD5754R正确配置：SPI Mode 1 (CPOL=0, CPHA=1)
-// 根据测试指南：SCLK空闲为低，数据在下降沿（第2个边沿）采样
-#define SPIB_CLK_POLARITY       SPI_CLK_POLARITY_LOW    // SPIB: Mode 1 (CPOL=0) - SCLK空闲为低
-#define SPIB_CLK_PHASE          SPI_CLK_PHASE_DELAY     // SPIB: Mode 1 (CPHA=1) - 数据在下降沿采样
+// ✅ AD5754R正确配置：SPI Mode 0 (CPOL=0, CPHA=0)
+// 根据实际测试：SCLK空闲为低，数据在上升沿（第1个边沿）采样
+#define SPIB_CLK_POLARITY       SPI_CLK_POLARITY_LOW    // SPIB: Mode 0 (CPOL=0) - SCLK空闲为低
+#define SPIB_CLK_PHASE          SPI_CLK_PHASE_NORMAL    // SPIB: Mode 0 (CPHA=0) - 数据在上升沿采样
 
 //==========================================================
 // 函数原型
@@ -126,6 +127,13 @@ void Test_AD5754R_Communication(void);      // 周期性通信测试（只读取
 void Test_AD5754R_PowerRegister(void);      // 电源寄存器写入和读回验证（只执行一次）
 void Test_AD5754R_DACRegister(void);        // DAC寄存器循环测试
 
+//==========================================================
+// AD5754R DMA专用函数 (新增)
+//==========================================================
+bool AD5754_SendCommand_DMA(uint32_t command, uint32_t timeout_ms);
+bool AD5754_ReadCommand_DMA(uint32_t command, uint32_t* response, uint32_t timeout_ms);
+void Test_AD5754R_DACRegister_DMA(void);
+
 // AD5754R通信测试变量声明
 extern volatile uint32_t ad5754_test_write_value;
 extern volatile uint32_t ad5754_test_read_value;
@@ -148,5 +156,21 @@ extern volatile uint32_t ad5754_init_ctrl_cmd;      // 初始化时写入控制�
 extern volatile uint32_t ad5754_init_power_cmd;     // 初始化时写入电源寄存器的命令
 extern volatile uint32_t ad5754_init_power_readback; // 初始化时读回的电源寄存器值
 extern volatile uint16_t ad5754_init_success;        // 初始化成功标志（1=成功，0=失败）
+
+//==========================================================
+// DMA模式调试变量声明（与FIFO模式分离）
+//==========================================================
+extern volatile uint16_t debug_dma_rx_word1;  // DMA接收的第1个字
+extern volatile uint16_t debug_dma_rx_word2;  // DMA接收的第2个字
+extern volatile uint16_t debug_dma_rx_word3;  // DMA接收的第3个字
+extern volatile uint32_t debug_dma_result;    // DMA解析后的结果
+extern volatile uint32_t debug_dma_isr_count; // DMA中断执行次数计数器
+
+//==========================================================
+// SPIB DMA 传输层函数 (新增)
+//==========================================================
+// void Drv_SPIB_DMA_Init(void);  // ⚠️ 已废弃：空函数，无实际作用
+DMA_ErrorCode_t Drv_SPIB_TransmitReceive_DMA(Uint16* tx_data, Uint16* rx_data, Uint16 word_count, uint32_t timeout_ms);
+
 
 #endif /* DRV_SPI_H_ */

@@ -175,7 +175,8 @@ void InitPeripheralClocks(void)
     CpuSysRegs.PCLKCR0.bit.CPUTIMER0 = 1;
 //    CpuSysRegs.PCLKCR0.bit.CPUTIMER1 = 1;
 //    CpuSysRegs.PCLKCR0.bit.CPUTIMER2 = 1;
-
+    CpuSysRegs.PCLKCR8.bit.SPI_A = 1;  // 使能SPIA时钟
+    CpuSysRegs.PCLKCR8.bit.SPI_B = 1;  // 使能SPIB时钟
 #ifdef CPU1
 //    CpuSysRegs.PCLKCR0.bit.HRPWM = 1;
 #endif
