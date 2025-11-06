@@ -528,6 +528,12 @@ volatile uint32_t ad5754_test_read_value = 0;
 volatile uint16_t ad5754_comm_test_pass = 0;
 volatile uint16_t ad5754_initialized = 0;  // AD5754R初始化完成标志
 
+// AD5754R初始化专用调试变量（不会被周期性通信覆盖）
+volatile uint32_t ad5754_init_ctrl_cmd = 0;      // 初始化时写入控制寄存器的命令
+volatile uint32_t ad5754_init_power_cmd = 0;     // 初始化时写入电源寄存器的命令
+volatile uint32_t ad5754_init_power_readback = 0; // 初始化时读回的电源寄存器值
+volatile uint16_t ad5754_init_success = 0;        // 初始化成功标志（1=成功，0=失败）
+
 // GPIO25诊断测试变量
 volatile uint16_t gpio25_with_pullup = 0;
 volatile uint16_t gpio25_without_pullup = 0;
@@ -577,22 +583,81 @@ void Test_GPIO25_InputCapability(void)
 //****************************************************************************
 // 函数名: AD5754R_Init
 // 功能: AD5754R初始化（只执行一次）
-// 说明: 上电初始化，使能内部基准和DAC通道A
+// 说明: 上电初始化，配置控制寄存器并使能内部基准和DAC通道A
 //****************************************************************************
 void AD5754R_Init(void)
 {
-    uint32_t write_cmd;
+    uint32_t write_cmd, read_cmd, nop_cmd, read_back;
     uint16_t init_value = 0x0011; // PU_REF=1, PU_A=1
+    volatile Uint16 dummy;
 
-    // 写入电源控制寄存器
-    write_cmd = (AD5754_WRITE_CMD) | ((uint32_t)AD5754_REG_POWER << 16) | init_value;
-    ad5754_test_write_value = write_cmd;
+    // 步骤1：上电延时，让芯片内部电路稳定
+    DELAY_US(50000);  // 50ms（增加延时）
+
+    // 步骤2：配置控制寄存器（确保SDO输出使能）
+    // REG=011(控制寄存器), A2:A0=001, Data=0x0000
+    // DB3=0(TSD禁用), DB2=0(箝位使能), DB1=0(CLR选择=0V), DB0=0(SDO使能)
+    write_cmd = (AD5754_WRITE_CMD) | 
+                ((uint32_t)AD5754_REG_CONTROL << 19) |  // REG位：DB21-19，左移19位
+                (0x01UL << 16) |                        // A2:A0位：DB18-16，地址001
+                0x0000;                                 // 数据位：DB15-0
+    ad5754_init_ctrl_cmd = write_cmd;  // 保存控制寄存器命令（专用变量）
+    AD5754_Send24BitCommand(write_cmd);
+    DELAY_US(1000);  // 增加延时
+
+    // 步骤3：写入电源控制寄存器（使能内部基准和DAC A）
+    // REG=010(电源控制寄存器), A2:A0=000, Data=0x0011
+    write_cmd = (AD5754_WRITE_CMD) | 
+                ((uint32_t)AD5754_REG_POWER << 19) |    // REG位：DB21-19，左移19位
+                (0x00UL << 16) |                        // A2:A0位：DB18-16，地址000
+                init_value;                             // 数据位：PU_REF=1, PU_A=1
+    ad5754_init_power_cmd = write_cmd;  // 保存电源寄存器命令（专用变量）
     AD5754_Send24BitCommand(write_cmd);
     
-    // 等待20ms，确保内部基准和DAC通道上电稳定
-    DELAY_US(20000);
+    // 步骤4：等待内部基准稳定（关键！）
+    DELAY_US(100000);  // 100ms等待基准稳定
     
-//    ad5754_initialized = 1; // 标记初始化完成
+    // === 步骤5：验证电源寄存器写入是否成功 ===
+    // 清空RX FIFO
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0)
+    {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // 发送读电源寄存器命令
+    read_cmd = (AD5754_READ_CMD) | 
+               ((uint32_t)AD5754_REG_POWER << 19) |
+               (0x00UL << 16);
+    AD5754_Send24BitCommand(read_cmd);
+    DELAY_US(100);
+    
+    // 清空读命令产生的接收数据
+    while(SpibRegs.SPIFFRX.bit.RXFFST > 0)
+    {
+        dummy = SpibRegs.SPIRXBUF;
+    }
+    
+    // 发送NOP命令读取返回数据
+    nop_cmd = (AD5754_WRITE_CMD) | 
+              ((uint32_t)AD5754_REG_CONTROL << 19) |
+              (0x00UL << 16);
+    read_back = AD5754_Send24BitCommand_WithRead(nop_cmd);
+    
+    // 保存读回的电源寄存器值（专用变量，不会被覆盖）
+    ad5754_init_power_readback = read_back;
+    
+    // 验证写入是否成功
+    // 预期：read_back的低5位应该是0x11（PU_REF=1, PU_A=1）
+    if ((read_back & 0x001F) == 0x0011)
+    {
+        ad5754_init_success = 1;  // 初始化成功
+    }
+    else
+    {
+        ad5754_init_success = 0;  // 初始化失败
+    }
+    
+    ad5754_initialized = 1; // 标记初始化完成
 }
 
 //****************************************************************************
@@ -623,8 +688,10 @@ void Test_AD5754R_Communication(void)
 
     // --- 步骤 1: 写入测试值到通道A的输出范围寄存器 ---
     // 格式：R/W=0, REG=001(RANGE), Channel=000(A), Data=0x0004(±10V)
-    write_cmd = (AD5754_WRITE_CMD) | ((uint32_t)AD5754_REG_RANGE << 16) | 
-                ((uint32_t)AD5754_CH_A << 13) | test_value;
+    write_cmd = (AD5754_WRITE_CMD) | 
+                ((uint32_t)AD5754_REG_RANGE << 19) |    // REG位：DB21-19，左移19位
+                ((uint32_t)AD5754_CH_A << 16) |         // A2:A0位：DB18-16，左移16位
+                test_value;                              // 数据位：DB15-0
     ad5754_test_write_value = write_cmd;
     AD5754_Send24BitCommand(write_cmd);
     DELAY_US(100); // 等待写入完成
@@ -636,8 +703,9 @@ void Test_AD5754R_Communication(void)
     }
 
     // --- 步骤 2: 发送读命令以选择要读取的寄存器 ---
-    read_cmd = (AD5754_READ_CMD) | ((uint32_t)AD5754_REG_RANGE << 16) | 
-               ((uint32_t)AD5754_CH_A << 13);
+    read_cmd = (AD5754_READ_CMD) | 
+               ((uint32_t)AD5754_REG_RANGE << 19) |     // REG位：DB21-19，左移19位
+               ((uint32_t)AD5754_CH_A << 16);           // A2:A0位：DB18-16，左移16位
     AD5754_Send24BitCommand(read_cmd);
     DELAY_US(100);
 
@@ -648,7 +716,11 @@ void Test_AD5754R_Communication(void)
     }
 
     // --- 步骤 3: 发送NOP命令，并在此时钟周期内读取返回的数据 ---
-    nop_cmd = (AD5754_WRITE_CMD) | ((uint32_t)AD5754_REG_CONTROL << 16) | 0x04;
+    // REG=011(控制寄存器), A2:A0=000(NOP), Data=无关
+    nop_cmd = (AD5754_WRITE_CMD) | 
+              ((uint32_t)AD5754_REG_CONTROL << 19) |    // REG位：DB21-19，左移19位
+              (0x00UL << 16) |                           // A2:A0=000：NOP命令
+              0x0000;                                    // 数据位（无关）
     read_back_value = AD5754_Send24BitCommand_WithRead(nop_cmd);
     ad5754_test_read_value = read_back_value;
 
@@ -672,17 +744,20 @@ void Test_AD5754R_Communication(void)
 void Test_AD5754R_WriteTest(void)
 {
     // 步骤1: 设置通道A输出范围为±10V
-    // R/W=0, REG=001, Channel=000, Range=100(±10V)
-    AD5754_Send24BitCommand(0x100004);
+    // R/W=0, REG=001(RANGE), Channel=000(A), Range=100(±10V)
+    // 命令格式：(0x01 << 19) | (0x00 << 16) | 0x0004 = 0x080004
+    AD5754_Send24BitCommand(0x080004);
     DELAY_US(5000);
 
     // 步骤2: 使能内部基准和DAC A
-    // R/W=0, REG=010, Data=0x0011 (PU_REF + PU_A)
-    AD5754_Send24BitCommand(0x200011);
+    // R/W=0, REG=010(POWER), A2:A0=000, Data=0x0011 (PU_REF + PU_A)
+    // 命令格式：(0x02 << 19) | (0x00 << 16) | 0x0011 = 0x100011
+    AD5754_Send24BitCommand(0x100011);
     DELAY_US(10000);  // 等待上电稳定
 
     // 步骤3: 设置DAC A输出0V（中间值0x8000）
-    // R/W=0, REG=000, Channel=000, Data=0x8000
+    // R/W=0, REG=000(DAC), Channel=000(A), Data=0x8000
+    // 命令格式：(0x00 << 19) | (0x00 << 16) | 0x8000 = 0x008000
     AD5754_Send24BitCommand(0x008000);
     DELAY_US(5000);
 
@@ -697,19 +772,27 @@ void Test_AD5754R_WriteTest(void)
 void Test_AD5754R_PowerSequence(void)
 {
     // 步骤1: 设置通道A为+5V输出范围
-    AD5754_Send24BitCommand(0x040000);  // REG=001, 通道A，+5V范围
+    // REG=001(RANGE), Channel=000(A), Range=000(+5V)
+    // 命令格式：(0x01 << 19) | (0x00 << 16) | 0x0000 = 0x080000
+    AD5754_Send24BitCommand(0x080000);
     DELAY_US(5000);
 
     // 步骤2: 使能内部基准电压源
-    AD5754_Send24BitCommand(0x020010);  // REG=010, PU_REF=1
+    // REG=010(POWER), A2:A0=000, Data=0x0010 (PU_REF=1)
+    // 命令格式：(0x02 << 19) | (0x00 << 16) | 0x0010 = 0x100010
+    AD5754_Send24BitCommand(0x100010);
     DELAY_US(10000);
 
     // 步骤3: 使能DAC通道A
-    AD5754_Send24BitCommand(0x020011);  // REG=010, PU_REF=1 + PU_A=1
+    // REG=010(POWER), A2:A0=000, Data=0x0011 (PU_REF=1 + PU_A=1)
+    // 命令格式：(0x02 << 19) | (0x00 << 16) | 0x0011 = 0x100011
+    AD5754_Send24BitCommand(0x100011);
     DELAY_US(10000);
 
     // 步骤4: 设置DAC A输出中间值（2.5V在+5V范围内）
-    AD5754_Send24BitCommand(0x008000);  // REG=000, 通道A, DAC=32768
+    // REG=000(DAC), Channel=000(A), Data=0x8000
+    // 命令格式：(0x00 << 19) | (0x00 << 16) | 0x8000 = 0x008000
+    AD5754_Send24BitCommand(0x008000);
     DELAY_US(5000);
 }
 

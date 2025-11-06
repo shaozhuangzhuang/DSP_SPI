@@ -125,4 +125,10 @@ extern volatile uint32_t ad5754_test_read_value;
 extern volatile uint16_t ad5754_comm_test_pass;
 extern volatile uint16_t ad5754_initialized;
 
+// AD5754R初始化专用调试变量声明（不会被周期性通信覆盖）
+extern volatile uint32_t ad5754_init_ctrl_cmd;      // 初始化时写入控制寄存器的命令
+extern volatile uint32_t ad5754_init_power_cmd;     // 初始化时写入电源寄存器的命令
+extern volatile uint32_t ad5754_init_power_readback; // 初始化时读回的电源寄存器值
+extern volatile uint16_t ad5754_init_success;        // 初始化成功标志（1=成功，0=失败）
+
 #endif /* DRV_SPI_H_ */

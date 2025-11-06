@@ -76,10 +76,11 @@ void main(void)
     multiplier = 0;
     flag_20ms_write = 0;
 
+
     // ===== 主循环 =====
     while(1)
     {
-        // ===== 10ms任务（SPIB发送，用于AD5754R通信测试） =====
+        // ===== 2ms任务（SPIB发送，用于AD5754R通信测试） =====
         if(flag_10ms_spi )
         {
             flag_10ms_spi = 0;   // 清除标志
@@ -194,8 +195,8 @@ interrupt void cpu_timer0_isr(void)
         counter_20ms = 0;
     }
 
-    // ===== 10ms任务标志（SPIB发送，用于AD5754R通信测试） =====
-    if(counter_10ms >= 200) { // 每200次触发（200 * 50us = 10ms）
+    // ===== 2ms任务标志（SPIB发送，用于AD5754R通信测试） =====
+    if(counter_10ms >= 40) { // 每40次触发（40 * 50us = 2ms）
         flag_10ms_spi = 1;
         counter_10ms = 0;
     }
